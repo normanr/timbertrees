@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "timbertrees"
+version = "0.1.0"
+description = ""
+authors = ["Norman Rasmussen <norman@rasmussen.co.za>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+unityparser = "^3.0.1"
+pydot = "^1.4.2"
+json5 = "^0.9.14"
+yattag = "^1.15.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
