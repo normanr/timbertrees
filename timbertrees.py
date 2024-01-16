@@ -773,6 +773,12 @@ class HtmlGenerator(Generator):
     with tag('body'):
       line('h1', name)
       with self.tag('div', id='content', klass='card'):
+        with self.tag('div', klass='filters'):
+          with self.tag('div', id='toggle'):
+            line('span', '▲ ◀', klass='producers')
+            line('span', ' / ')
+            line('span', '▼ ▶', klass='consumers')
+            line('span', ' / *')
         super().RenderFaction(faction)
       # with tag('object', width='1440', data=str(filename.relative_to(filename.parent).with_suffix('.svg'))):
       #   pass
@@ -804,7 +810,7 @@ class HtmlGenerator(Generator):
         item = r[yield_type]['YielderSpecification']['Yield']['GoodId'].lower()
         if item != 'log' and item not in searchable:
           searchable.append(item)
-    with self.tag('tr', ('data-searchable', ' '.join(searchable)), klass='naturalresource'):
+    with self.tag('tr', ('data-searchable', ' '.join(searchable)), ('data-category', 'producer'), klass='naturalresource'):
       line('td', _(f'Pictogram.Aquatic') if r['WaterNaturalResourceSpecification']['MinWaterHeight'] > 0 else '', klass='name')
       line('td', _(r['LabeledPrefab']['DisplayNameLocKey']), klass='name')
       line('td', f'{_('Time.DaysShort').format(r['Growable']['GrowthTimeInDays'])}')
@@ -849,7 +855,7 @@ class HtmlGenerator(Generator):
             good = self.goods[x['GoodId'].lower()]
             lockey = 'DisplayNameLocKey' if x['Amount'] == 1 else 'PluralDisplayNameLocKey'
             label = _(good[lockey])
-            line('li', f'{x['Amount']} {label}', ('data-searchable', good['Id'].lower()))
+            line('li', f'{x['Amount']} {label}', ('data-searchable', good['Id'].lower()), ('data-category', 'consumer'))
 
         radius = (
           building.get('RangedEffectBuilding', {}).get('EffectRadius') or
@@ -863,7 +869,7 @@ class HtmlGenerator(Generator):
             label = f'{_(needgroup['DisplayNameLocKey'])}: {_(need['DisplayNameLocKey'])}'
             if radius:
               label = f'{label} {_('Needs.InRange').format(radius)}'
-            line('li', label, ('data-searchable', need['Id'].lower()), klass='bad' if float(points) < 0 else 'good')
+            line('li', label, ('data-searchable', need['Id'].lower()), ('data-category', 'consumer' if float(points) < 0 else 'producer'), klass='bad' if float(points) < 0 else 'good')
 
         with self.tag('ul', klass='needs'):
           area_need = building.get('AreaNeedApplier')
@@ -901,12 +907,17 @@ class HtmlGenerator(Generator):
           for r in sorted(resources.items(), key=lambda r: r[1].get('NaturalResource', {}).get('OrderId', 0)):
             plant: Prefab = r[1]
             searchable = [plant['Id'].lower()]
+            categories = []
+            if plants and plant in plants:
+              categories.append('producer')
             for yt in ('Cuttable', 'Gatherable', 'Ruin'):
               if yt in plant:
                 item = plant[yt]['YielderSpecification']['Yield']['GoodId'].lower()
                 if item != 'log' and item not in searchable:
                   searchable.append(item)
-            with self.tag('tr', ('data-searchable', ' '.join(searchable))):
+            if yields and plant in yields:
+              categories.append('consumer')
+            with self.tag('tr', ('data-searchable', ' '.join(searchable)), ('data-category', ' '.join(categories))):
               line('td', _(plant['LabeledPrefab']['DisplayNameLocKey']), klass='name')
               if plants:
                 if plant in plants:
@@ -938,7 +949,7 @@ class HtmlGenerator(Generator):
             good = self.goods[recipe['Fuel']['Id'].lower()]
             amount = round(1 / recipe['CyclesFuelLasts'], 3)
             lockey = 'DisplayNameLocKey' if amount == 1 else 'PluralDisplayNameLocKey'
-            line('li', f'{amount} {_(good[lockey])}', ('data-searchable', good['Id'].lower()))
+            line('li', f'{amount} {_(good[lockey])}', ('data-searchable', good['Id'].lower()), ('data-category', 'consumer'))
 
           for x in recipe['Ingredients']:
             if x['Good']['Id'].lower() not in self.goods:  # required for ZauerKraut in Librarybooks
@@ -947,7 +958,7 @@ class HtmlGenerator(Generator):
             good = self.goods[x['Good']['Id'].lower()]
             lockey = 'DisplayNameLocKey' if x['Amount'] == 1 else 'PluralDisplayNameLocKey'
             label = _(good[lockey])
-            line('li', f'{x['Amount']} {label}', ('data-searchable', good['Id'].lower()))
+            line('li', f'{x['Amount']} {label}', ('data-searchable', good['Id'].lower()), ('data-category', 'consumer'))
 
         with self.tag('ul', klass='products'):
           for x in recipe['Products']:
@@ -957,7 +968,7 @@ class HtmlGenerator(Generator):
             good = self.goods[x['Good']['Id'].lower()]
             lockey = 'DisplayNameLocKey' if x['Amount'] == 1 else 'PluralDisplayNameLocKey'
             label = _(good[lockey])
-            line('li', f'{x['Amount']} {label}', ('data-searchable', good['Id'].lower()))
+            line('li', f'{x['Amount']} {label}', ('data-searchable', good['Id'].lower()), ('data-category', 'producer'))
 
           if recipe['ProducedSciencePoints'] > 0:
             line('li', f'{recipe['ProducedSciencePoints']} {_('Science.SciencePoints')}', ('data-searchable', 'science'))

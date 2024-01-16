@@ -1,33 +1,59 @@
 document.addEventListener('DOMContentLoaded', (event) => {
-  document.addEventListener('click', (event) => {
-    let searchable = event.target.closest('[data-searchable]')?.dataset.searchable.split(' ');
-    if (!searchable) {
-      return;
-    };
-    let srcRect = event.target.getBoundingClientRect();
+  let content = document.getElementById('content');
+
+  function updateContent(searchable, categories) {
     document.querySelectorAll('.expose, .found').forEach(e => {
       e.classList.remove('expose');
       e.classList.remove('found');
     });
-    if (document.getElementById('content').classList.contains('searching')) {
-      document.getElementById('content').classList.remove('searching');
-      let dstRect = event.target.getBoundingClientRect();
-      let dy = dstRect.top - srcRect.top;
-      window.scrollBy(0, dy);
+    if (!searchable) {
       return;
     };
-    document.getElementById('content').classList.add('searching');
-    selectors = searchable.map(id => `[data-searchable~=${JSON.stringify(id)}]`);
+    let suffix = (categories || []).map(c => `[data-category~=${JSON.stringify(c)}]`);
+    let selectors = searchable.map(id => `[data-searchable~=${JSON.stringify(id)}]` + suffix);
     document.querySelectorAll(selectors.join(', ')).forEach(e => {
       e.classList.add('found');
       e = e.parentElement.closest('.card');
-      while (!e.classList.contains('searching')) {
+      while (e) {
         e.classList.add('expose');
         e = e.parentElement.closest('.card');
       }
     });
+  }
+
+  function searchableClick(event) {
+    let srcRect = event.target.getBoundingClientRect();
+    if (content.dataset.searching) {
+      delete content.dataset.searching;
+      delete content.dataset.categories;
+      updateContent(null);
+    } else {
+      let searchable = event.target.closest('[data-searchable]')?.dataset.searchable.split(' ');
+      content.dataset.searching = searchable.join(' ');
+      updateContent(searchable);
+    }
     let dstRect = event.target.getBoundingClientRect();
     let dy = dstRect.top - srcRect.top;
     window.scrollBy(0, dy);
+  }
+
+  function toggleClick(event) {
+    if (!content.dataset.categories) {
+      content.dataset.categories = "producer";
+    } else if (content.dataset.categories == "producer") {
+      content.dataset.categories = "consumer";
+    } else if (content.dataset.categories == "consumer") {
+      delete content.dataset.categories;
+    }
+    updateContent(content.dataset.searching.split(' '), content.dataset.categories?.split(' '))
+  }
+
+  document.addEventListener('click', (event) => {
+    if (event.target.closest('[data-searchable]')) {
+      searchableClick(event);
+    };
+    if (event.target.closest('#toggle')) {
+      toggleClick(event);
+    };
   });
 });
