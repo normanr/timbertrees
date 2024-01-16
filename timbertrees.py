@@ -402,6 +402,7 @@ def load_prefabs(
 
 
 def load_translations(args: argparse.Namespace, language: str):
+  csv.register_dialect('timberborn', skipinitialspace=True, strict=True)
   catalog: dict[str, str] = {}
   for directory in args.directories:
     pattern = f'Resources/localizations/{language}*.txt'
@@ -409,7 +410,9 @@ def load_translations(args: argparse.Namespace, language: str):
     # assert len(paths) <= 1, f'len(glob({pattern})) == {len(paths)}: {paths}'
     for x in paths:
       with open(x, 'rt', encoding='utf-8-sig') as f:
-        for row in csv.DictReader(f):
+        reader = csv.DictReader(f, dialect='timberborn')
+        for row in reader:
+          assert row['ID'] not in catalog, f'Duplicate key {row['ID']!r} on line {reader.line_num} of {x}'
           catalog[row['ID']] = row['Text']
 
   catalog['Pictogram.Dwellers'] = '🛌'
@@ -590,11 +593,12 @@ class GraphGenerator(Generator):
 
     if recipe['Fuel']['Id']:
       good = self.goods[recipe['Fuel']['Id'].lower()]
+      amount = round(1 / recipe['CyclesFuelLasts'], 3)
       self.graph.add_edge(pydot.Edge(
         good['Id'],
         building['Id'] + '.' + recipe['Id'],
-        label=round(1 / recipe['CyclesFuelLasts'], 3),
-        labeltooltip=f'{_(good['DisplayNameLocKey'])} --> {_(recipe['DisplayLocKey'])}',
+        label=amount,
+        labeltooltip=f'{_(good['DisplayNameLocKey' if amount == 1 else 'PluralDisplayNameLocKey'])} --> {_(recipe['DisplayLocKey'])}',
         style='dashed' if good['Id'] in building_goods else 'solid',
         color='#b30000',
       ))
@@ -603,18 +607,18 @@ class GraphGenerator(Generator):
       if x['Good']['Id'].lower() not in self.goods:
         continue
       good = self.goods[x['Good']['Id'].lower()]
-      label = _(good['DisplayNameLocKey'])
       #if good['Id'] in building_goods:
       #  continue
       self.graph.add_node(pydot.Node(
         good['Id'],
-        label=label,
+        label=_(good['DisplayNameLocKey']),
         # image=f'sprites/goods/{good['Good']['Id']}Icon.png',
       ))
       self.graph.add_edge(pydot.Edge(
         good['Id'],
         building['Id'] + '.' + recipe['Id'],
         label=x['Amount'],
+        labeltooltip=f'{_(good['DisplayNameLocKey' if x['Amount'] == 1 else 'PluralDisplayNameLocKey'])} --> {_(recipe['DisplayLocKey'])}',
         style='dashed' if good['Id'] in building_goods else 'solid',
         color='#b30000',
       ))
@@ -623,10 +627,9 @@ class GraphGenerator(Generator):
       if x['Good']['Id'].lower() not in self.goods:
         continue
       good = self.goods[x['Good']['Id'].lower()]
-      label = _(good['DisplayNameLocKey'])
       self.graph.add_node(pydot.Node(
         good['Id'],
-        label=label,
+        label=_(good['DisplayNameLocKey']),
         # image=f'sprites/goods/{good['Good']['Id']}Icon.png',
       ))
       self.graph.add_edge(pydot.Edge(
