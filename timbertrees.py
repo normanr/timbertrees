@@ -85,8 +85,7 @@ class FactionSpecification(Specification):
   DisplayNameLocKey: str
   NewGameFullAvatar: str
   UniqueNaturalResources: list[str]
-  CommonBuildings: list[str]
-  UniqueBuildings: list[str]
+  Buildings: list[str]
 
 
 class ContinuousEffectSpecification(Specification):
@@ -94,9 +93,10 @@ class ContinuousEffectSpecification(Specification):
   PointsPerHour: float
 
 
-class NeedApplierEffectSpecification(Specification):
+class NeedApplierEffectSpecificationPerHour(Specification):
   NeedId: str
   Points: float
+  ProbabilityPerHour: float
 
 
 class Metadata(typing.TypedDict):
@@ -138,7 +138,7 @@ class PlaceableBlockObject(BaseComponent):
 
 class AreaNeedApplier(BaseComponent):
   ApplicationRadius: int
-  EffectSpecification: NeedApplierEffectSpecification
+  EffectSpecificationPerHour: NeedApplierEffectSpecificationPerHour
 
 
 class ContinuousEffectBuilding(BaseComponent):
@@ -150,7 +150,7 @@ class RangedEffectBuilding(BaseComponent):
 
 
 class WorkshopRandomNeedApplier(BaseComponent):
-  EffectSpecifications: list[NeedApplierEffectSpecification]
+  EffectSpecifications: list[NeedApplierEffectSpecificationPerHour]
 
 
 class Dwelling(BaseComponent):
@@ -230,10 +230,10 @@ def track[T](
 def load_versions(args: argparse.Namespace) -> list[dict[str, typing.Any]]:
   versions: list[dict[str, typing.Any]] = []
   for i, directory in enumerate(track('Loading versions', args.directories, transient=True)):
-    pattern = '../../../mod.json' if i else '../../../Timberborn_Data/StreamingAssets/VersionNumbers.json'
-    logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern)}:')
+    pattern = '../../../mod.json' if i else 'StreamingAssets/VersionNumbers.json'
+    logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
     paths = [p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False)]
-    assert len(paths) == 1, f'len(glob({pattern})) == {len(paths)}: {paths}'
+    assert len(paths) == 1, f'len({pathlib.Path(directory)!r}.glob({pattern})) == {len(paths)}: {paths}'
     with open(paths[0], 'rt', encoding='utf-8-sig') as f:
       doc = typing.cast(dict, json5.load(f))
     assert not i or 'UniqueId' in doc, directory
@@ -260,22 +260,42 @@ def load_metadata(args: argparse.Namespace) -> dict[str, tuple[str, Metadata]]:
   return metadata
 
 
+def load_manifests(args: argparse.Namespace) -> dict[str, dict[str, str]]:
+  manifests: dict[str, dict[str, str]] = {}
+  for i, directory in enumerate(track('Loading asset manifests', args.directories)):
+    if not i:
+      continue
+    pattern = '../../../assets/*.manifest'
+    logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
+    paths = [p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False)]
+    assert len(paths) > 0, f'len(glob({pattern})) == {len(paths)}: {paths}'
+    assets = {}
+    for p in paths:
+      with open(p, 'rt', encoding='utf-8-sig') as f:
+        doc = yaml.load(f, yaml.SafeLoader)
+        for asset in doc.get('Assets', []):
+          ap = pathlib.Path(asset)
+          assets[str(ap.parent.joinpath(ap.stem)).lower()] = ap.suffix
+    manifests[directory] = assets
+  return manifests
+
+
 def load_specifications[T: Specification](
     args: argparse.Namespace,
     cls: type[T],
 ) -> list[T]:
-  pattern = f'Resources/specifications/**/{cls.__name__}.*'
 
   all_paths = []
   for i, directory in enumerate(args.directories):
-    logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern)}:')
+    pattern = f'../../../Specifications/**/{cls.__name__}.*' if i else f'Resources/specifications/**/{cls.__name__}.*'
+    logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
     paths = [p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta')]
     assert paths or i, directory
-    all_paths.extend((i, directory, path) for path in paths)
+    all_paths.extend((i, path) for path in paths)
 
-  all_specs: dict[str, list[tuple[bool, bool, T]]] = {}
-  for i, directory, p in track(f'Loading {cls.__name__.lower().replace('specification', ' specs')}', all_paths):
-    logging.debug(f'Loading {p.relative_to(directory)}')
+  all_specs: dict[str, list[tuple[pathlib.Path, bool, bool, T]]] = {}
+  for i, p in track(f'Loading {cls.__name__.lower().replace('specification', ' specs')}', all_paths):
+    logging.debug(f'Loading {p.resolve()}')
     spec_name, _, name = p.stem.lower().partition('.')
     assert spec_name == cls.__name__.lower()
     original = not i or name.endswith('.original')
@@ -283,13 +303,18 @@ def load_specifications[T: Specification](
     name = name.replace('.original', '').replace('.replace', '')
     with open(p, 'rt', encoding='utf-8-sig') as f:
       doc = typing.cast(T, json5.load(f))
-    all_specs.setdefault(name, []).append((original, replace, doc))
+    all_specs.setdefault(name, []).append((p, original, replace, doc))
 
   merged_specs: dict[str, T] = {}
   for name, l in all_specs.items():
-    for original, replace, doc in sorted(l, key=lambda i: (not i[0], i[1])):
+    for p, original, replace, doc in sorted(l, key=lambda i: (not i[1], i[2])):
       if original:
         assert name not in merged_specs, name
+      else:
+        if name not in merged_specs:
+          logging.debug(f'Skipping {p.resolve()} because of missing original')
+          # assert name in merged_specs, name
+          continue
       spec = merged_specs.setdefault(name, cls())
       for k, v in doc.items():
         i = spec.get(k, None)
@@ -337,12 +362,18 @@ def resolve_properties[T](
 
 def load_prefab(
     args: argparse.Namespace,
+    manifests: dict[str, dict[str, str]],
     metadata: dict[str, tuple[str, Metadata]],
     file_path: str,
 ):
   pattern = f'**/{pathlib.Path(file_path).name}.prefab'
   for directory in args.directories:
     paths = list(pathlib.Path(directory).glob(pattern, case_sensitive=False))
+    manifest = manifests.get(directory, {})
+    def GetManifestSuffix(path: pathlib.Path):
+      prefix = path.parent.relative_to(directory).joinpath(path.stem)
+      return manifest.get(f'assets/{str(prefix).lower()}', path.suffix)
+    paths = [path for path in paths if GetManifestSuffix(path).lower() == '.prefab']
     assert len(paths) <= 1, f'len(glob({pattern})) == {len(paths)}: {paths}'
     for p in paths:
       logging.debug(f'Loading {p.relative_to(directory)}')
@@ -357,6 +388,9 @@ def load_prefab(
         if entry.__class_name != 'MonoBehaviour':
           continue
         behaviour = typing.cast(MonoBehaviour, entry)
+        if 'guid' not in behaviour.m_Script:
+          logging.warning(f'Missing script for behaviour in {prefab['Id']}, skipping')
+          continue
         guid = behaviour.m_Script['guid']
         meta = metadata.get(guid)
         assert meta, guid
@@ -372,6 +406,7 @@ def load_prefab(
 
 def load_prefabs(
     args: argparse.Namespace,
+    manifests: dict[str, dict[str, str]],
     metadata: dict[str, tuple[str, Metadata]],
     factions: dict[str, FactionSpecification],
 ) -> dict[str, dict[str, Prefab]]:
@@ -380,7 +415,7 @@ def load_prefabs(
 
   prefabcollections = load_specifications(args, PrefabCollectionSpecification)
   commonpaths = list(itertools.chain.from_iterable(typing.cast(list, c['Paths']) for c in prefabcollections))
-  for prefab in track(f'Loading common prefabs', map(load_prefab, *zip(*((args, metadata, prefab) for prefab in commonpaths))), total=len(commonpaths)):
+  for prefab in track(f'Loading common prefabs', map(load_prefab, *zip(*((args, manifests, metadata, prefab) for prefab in commonpaths))), total=len(commonpaths)):
     assert prefab and prefab['Id'].lower() not in prefabs['common']
     prefabs['common'][prefab['Id'].lower()] = prefab
 
@@ -391,12 +426,12 @@ def load_prefabs(
 
     faction_prefabs = list(itertools.chain(
       faction['UniqueNaturalResources'],
-      faction['CommonBuildings'],
-      faction['UniqueBuildings'],
+      faction['Buildings'],
     ))
     prefabs[key] = {}
-    for prefab in track(f'Loading {faction['Id']} prefabs', map(load_prefab, *zip(*((args, metadata, prefab) for prefab in faction_prefabs))), total=len(faction_prefabs)):
-      assert prefab and prefab['Id'].lower() not in prefabs[key]
+    for prefab in track(f'Loading {faction['Id']} prefabs', map(load_prefab, *zip(*((args, manifests, metadata, prefab) for prefab in faction_prefabs))), total=len(faction_prefabs)):
+      assert prefab
+      assert prefab['Id'].lower() not in prefabs[key], prefab['Id']
       prefabs[key][prefab['Id'].lower()] = prefab
   return prefabs
 
@@ -404,16 +439,20 @@ def load_prefabs(
 def load_translations(args: argparse.Namespace, language: str):
   csv.register_dialect('timberborn', skipinitialspace=True, strict=True)
   catalog: dict[str, str] = {}
-  for directory in args.directories:
-    pattern = f'Resources/localizations/{language}*.txt'
+  for i, directory in enumerate(args.directories):
+    pattern = f'../../../lang/{language}*.txt' if i else f'Resources/localizations/{language}*.txt'
     paths = list(pathlib.Path(directory).glob(pattern, case_sensitive=False))
     # assert len(paths) <= 1, f'len(glob({pattern})) == {len(paths)}: {paths}'
     for x in paths:
       with open(x, 'rt', encoding='utf-8-sig') as f:
-        reader = csv.DictReader(f, dialect='timberborn')
-        for row in reader:
-          assert row['ID'] not in catalog, f'Duplicate key {row['ID']!r} on line {reader.line_num} of {x}'
-          catalog[row['ID']] = row['Text']
+        try:
+          reader = csv.DictReader(f, dialect='timberborn')
+          for row in reader:
+            assert row['ID'] not in catalog, f'Duplicate key {row['ID']!r} on line {reader.line_num} of {x.resolve()}'
+            catalog[row['ID']] = row['Text']
+        except Exception as e:
+          e.add_note(f'Loading {x.resolve()}')
+          raise
 
   catalog['Pictogram.Dwellers'] = '🛌'
   catalog['Pictogram.Workers'] = '🦫'
@@ -451,7 +490,11 @@ def dict_group_by_id[T](iterable: typing.Iterable[T], key: str) -> dict[str, lis
         group = ''
         break
       group = typing.cast(dict, group)[key_part]
-    groups.setdefault(typing.cast(str, group).lower(), []).append(value)
+    if group is not None:  # required for EffectSpecification --> EffectSpecificationPerHour rename
+      group = typing.cast(str, group).lower()
+    else:
+      logging.warning(f'Missing key in dict_group_by_id: {key}')
+    groups.setdefault(group, []).append(value)
   return groups
 
 
@@ -866,6 +909,9 @@ class HtmlGenerator(Generator):
         def RenderEffects(specs):
           for specs in dict_group_by_id(specs, 'NeedId').values():
             spec = list(specs)[0]
+            if spec['NeedId'] is None:  # required for EffectSpecification --> EffectSpecificationPerHour rename
+              logging.warning(f'Missing need in {building['Id']}')
+              continue
             need = self.needs[spec['NeedId'].lower()]
             needgroup = self.needgroups[need['NeedGroupId'].lower()]
             points = spec['Points'] if 'Points' in spec else spec['PointsPerHour']
@@ -877,7 +923,7 @@ class HtmlGenerator(Generator):
         with self.tag('ul', klass='needs'):
           area_need = building.get('AreaNeedApplier')
           if area_need:
-            RenderEffects([area_need['EffectSpecification']])
+            RenderEffects([area_need['EffectSpecificationPerHour']])
           RenderEffects(building.get('Dwelling', {'SleepEffects':[]})['SleepEffects'])
           RenderEffects(building.get('WorkshopRandomNeedApplier', {'EffectSpecifications':[]})['EffectSpecifications'])
           RenderEffects(building.get('Attraction', {'EffectSpecifications':[]})['EffectSpecifications'])
@@ -1076,6 +1122,8 @@ class TextGenerator(Generator):
       def RenderEffects(specs):
         for specs in dict_group_by_id(specs, 'NeedId').values():
           spec = list(specs)[0]
+          if spec['NeedId'] is None:  # required for EffectSpecification --> EffectSpecificationPerHour rename
+            continue
           need = self.needs[spec['NeedId'].lower()]
           needgroup = self.needgroups[need['NeedGroupId'].lower()]
           points = spec['Points'] if 'Points' in spec else spec['PointsPerHour']
@@ -1087,7 +1135,7 @@ class TextGenerator(Generator):
 
       area_need = building.get('AreaNeedApplier')
       if area_need:
-        RenderEffects([area_need['EffectSpecification']])
+        RenderEffects([area_need['EffectSpecificationPerHour']])
       RenderEffects(building.get('Dwelling', {'SleepEffects':[]})['SleepEffects'])
       RenderEffects(building.get('WorkshopRandomNeedApplier', {'EffectSpecifications':[]})['EffectSpecifications'])
       RenderEffects(building.get('Attraction', {'EffectSpecifications':[]})['EffectSpecifications'])
@@ -1191,7 +1239,9 @@ def main():
     for p in list(pathlib.Path(directory).glob(pattern, case_sensitive=False)):
       if p.match('*_*') or p.match('reference*'):
         continue
-      languages.append(p.relative_to(directory).stem)
+      language = p.relative_to(directory).stem
+      if language not in languages:
+        languages.append(language)
     languages.sort(key=lambda x: (len(x), x))
 
   language_arg.help=f'localization language to use (valid options: {', '.join(['all'] + languages)})'
@@ -1252,8 +1302,9 @@ def main():
         k = ToolGroupKey(toolgroups_by_id[groupId.lower()]) + k
       return k
     toolgroups = {tg['Id'].lower(): tg for tg in sorted(toolgroups_by_id.values(), key=lambda kg: ToolGroupKey(kg))}
+    manifests = load_manifests(args)
     metadata = load_metadata(args)
-    prefabs = load_prefabs(args, metadata, factions)
+    prefabs = load_prefabs(args, manifests, metadata, factions)
     d = dict(
       versions=versions,
       factions=factions,
