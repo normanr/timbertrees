@@ -73,10 +73,27 @@ class RecipeSpecification(Specification):
   CyclesFuelLasts: int
 
 
-class ToolGroupSpecification(Specification):
+# TimberAPI specific and documented at https://timberapi.com/tools/
+class ToolSpecification(Specification):
   Id: str
+  GroupId: str
   Order: int
   NameLocKey: str
+  DevMode: typing.NotRequired[bool]
+  Hidden: typing.NotRequired[bool]
+
+
+# TimberAPI enhanced and documented at https://timberapi.com/tool_groups/
+class ToolGroupSpecification(Specification):
+  Id: str
+  Layout: str
+  Order: int
+  NameLocKey: str
+  # Added by TimberAPI
+  Type: typing.NotRequired[str]
+  GroupId: typing.NotRequired[str]
+  DevMode: typing.NotRequired[bool]
+  Hidden: typing.NotRequired[bool]
 
 
 class FactionSpecification(Specification):
@@ -84,6 +101,7 @@ class FactionSpecification(Specification):
   Order: int
   DisplayNameLocKey: str
   NewGameFullAvatar: str
+  # These are references to filenames and/or GameObject.Name (not Prefab.PrefabName)
   UniqueNaturalResources: list[str]
   Buildings: list[str]
 
@@ -199,9 +217,14 @@ class YieldRemovingBuilding(BaseComponent):
   ResourceGroup: str
 
 
+class BasePrefab(BaseComponent):
+  PrefabName: str
+
+
 class Prefab(typing.TypedDict):
   Id: str
   Building: Building
+  Prefab: BasePrefab
   LabeledPrefab: LabeledPrefab
   NaturalResource: NaturalResource
   PlaceableBlockObject: PlaceableBlockObject
@@ -280,9 +303,82 @@ def load_manifests(args: argparse.Namespace) -> dict[str, dict[str, str]]:
   return manifests
 
 
+def upgrade_toolgroup_specs(
+    specs: dict[str, list[tuple[pathlib.Path, bool, bool, ToolGroupSpecification]]]
+):
+  for toolgroup_specs in specs.values():
+    for _, _, _, doc in toolgroup_specs:
+      if 'Order' in doc:
+        doc['Order'] = int(doc['Order'])
+  toolgroups = [
+    ToolGroupSpecification(
+      Id='Fields',
+      Layout='Blue',
+      Order=20,
+      Type='PlantingModeToolGroup',
+      NameLocKey='ToolGroups.FieldsPlanting',
+    ),
+    ToolGroupSpecification(
+      Id='Forestry',
+      Layout='Blue',
+      Order=30,
+      Type='PlantingModeToolGroup',
+      NameLocKey='ToolGroups.ForestryPlanting',
+    ),
+  ]
+  for tool in toolgroups:
+    tool_specs = specs.setdefault(tool['Id'].lower(), [])
+    if any(i[1] for i in tool_specs):
+      logging.warning(f'Duplicate {tool['Id']} Tool')
+      continue
+    # assert not any(i[1] for i in tool_specs)
+    tool_specs.insert(0, (pathlib.Path('builtin'), True, False, tool))
+
+
+def upgrade_tool_specs(
+    prefabs: dict[str, dict[str, Prefab]],
+    specs: dict[str, list[tuple[pathlib.Path, bool, bool, ToolSpecification]]]
+):
+  for tool_specs in specs.values():
+    for _, original, _, doc in tool_specs:
+      assert not original
+      if 'Order' in doc:
+        doc['Order'] = int(doc['Order'])
+  tools = []
+  for lst in prefabs.values():
+    for item in lst.values():
+      if 'PlaceableBlockObject' in item:
+        placeableBlockObject = item['PlaceableBlockObject']
+        tool = ToolSpecification(
+          Id=item['Id'],  # item['Prefab']['PrefabName'],
+          GroupId=placeableBlockObject['ToolGroupId'],
+          Order=placeableBlockObject['ToolOrder'] * 10,
+          NameLocKey=item['LabeledPrefab']['DisplayNameLocKey'],
+        )
+        if placeableBlockObject['DevModeTool'] == 1:
+          tool['DevMode'] = True
+        tools.append(tool)
+      if 'Plantable' in item:
+        naturalResource = item['NaturalResource']
+        tools.append(ToolSpecification(
+          Id=item['Id'],  # item['Prefab']['PrefabName'],
+          GroupId='Fields' if 'Crop' in item else 'Forestry',
+          Order=naturalResource['OrderId'],
+          NameLocKey=item['LabeledPrefab']['DisplayNameLocKey'],
+        ))
+  for tool in tools:
+    tool_specs = specs.setdefault(tool['Id'].lower(), [])
+    if any(i[1] for i in tool_specs):
+      logging.warning(f'Duplicate {tool['Id']} Tool')
+      continue
+    # assert not any(i[1] for i in tool_specs)
+    tool_specs.insert(0, (pathlib.Path('builtin'), True, False, tool))
+
+
 def load_specifications[T: Specification](
     args: argparse.Namespace,
     cls: type[T],
+    upgrade_specs: typing.Callable | None = None,
 ) -> list[T]:
 
   all_paths = []
@@ -290,7 +386,7 @@ def load_specifications[T: Specification](
     pattern = f'../../../Specifications/**/{cls.__name__}.*' if i else f'Resources/specifications/**/{cls.__name__}.*'
     logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
     paths = [p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta')]
-    assert paths or i, directory
+    assert paths or i or upgrade_specs, pathlib.Path(directory).joinpath(pattern).resolve()
     all_paths.extend((i, path) for path in paths)
 
   all_specs: dict[str, list[tuple[pathlib.Path, bool, bool, T]]] = {}
@@ -304,6 +400,8 @@ def load_specifications[T: Specification](
     with open(p, 'rt', encoding='utf-8-sig') as f:
       doc = typing.cast(T, json5.load(f))
     all_specs.setdefault(name, []).append((p, original, replace, doc))
+  if upgrade_specs:
+    upgrade_specs(all_specs)
 
   merged_specs: dict[str, T] = {}
   for name, l in all_specs.items():
@@ -312,7 +410,7 @@ def load_specifications[T: Specification](
         assert name not in merged_specs, name
       else:
         if name not in merged_specs:
-          logging.debug(f'Skipping {p.resolve()} because of missing original')
+          logging.warning(f'Skipping {p.resolve()} because of missing original')
           # assert name in merged_specs, name
           continue
       spec = merged_specs.setdefault(name, cls())
@@ -510,6 +608,7 @@ class Generator:
       needs: dict[str, NeedSpecification],
       recipes: dict[str, RecipeSpecification],
       toolgroups: dict[str, ToolGroupSpecification],
+      tools: dict[str, ToolSpecification],
       all_prefabs: dict[str, dict[str, Prefab]],
   ):
     self.args = args
@@ -521,9 +620,9 @@ class Generator:
     self.recipes = recipes
     self.toolgroups = toolgroups
     self.toolgroups_by_group = dict_group_by_id(toolgroups.values(), 'GroupId')
+    self.tools_by_group = dict_group_by_id(tools.values(), 'GroupId')
     prefabs = list(all_prefabs['common'].values()) + list(all_prefabs[faction['Id'].lower()].values())
-    self.prefabs = prefabs  # TODO: remove
-    self.buildings_by_group = dict_group_by_id(prefabs, 'PlaceableBlockObject.ToolGroupId')
+    self.prefabs = {prefab['Id'].lower(): prefab for prefab in prefabs}
     self.natural_resources: list[Prefab] = sorted(
       [p for p in prefabs if 'NaturalResource' in p],
       key=lambda p: ('Crop' not in p, p['NaturalResource']['OrderId'])
@@ -546,30 +645,42 @@ class Generator:
   def RenderFaction(self, faction: FactionSpecification):
     self.RenderNaturalResources(self.natural_resources)
     for g in self.toolgroups_by_group['']:
-      self.RenderToolGroup(g)
+      if g.get('Type') != 'PlantingModeToolGroup':
+        self.RenderToolGroup(g)
 
   def RenderNaturalResources(self, resources):
-    for r in resources:
-      self.RenderNaturalResource(r)
+    for g in self.toolgroups_by_group['']:
+      if g.get('Type') == 'PlantingModeToolGroup':
+        self.RenderToolGroup(g)
 
   def RenderToolGroup(self, toolgroup: ToolGroupSpecification):
+    if toolgroup.get('DevMode'):
+      return
     if toolgroup.get('Hidden'):
       return
-    items: list[tuple[int, typing.Literal[True], ToolGroupSpecification] | tuple[int, typing.Literal[False], Prefab]] = []
-    for building in self.buildings_by_group.get(toolgroup['Id'].lower(), []):
-      items.append((int(building['PlaceableBlockObject']['ToolOrder']), False, building))
+    items: list[tuple[int, typing.Literal[True], ToolGroupSpecification] | tuple[int, typing.Literal[False], ToolSpecification]] = []
+    for tool in self.tools_by_group.get(toolgroup['Id'].lower(), []):
+      items.append((tool['Order'], False, tool))
     for tg in self.toolgroups_by_group.get(toolgroup['Id'].lower(), []):
-      items.append((int(tg['Order']), True, tg))
+      items.append((tg['Order'], True, tg))
 
     for _, is_group, item in sorted(items, key=lambda x: (x[0], x[1])):
       if is_group:
-        item = typing.cast(ToolGroupSpecification, item)
-        self.RenderToolGroup(item)
+        toolgroup = typing.cast(ToolGroupSpecification, item)
+        self.RenderToolGroup(toolgroup)
       else:
-        item = typing.cast(Prefab, item)
-        if item['PlaceableBlockObject']['DevModeTool']:
+        tool = typing.cast(ToolSpecification, item)
+        if tool.get('DevMode'):
           continue
-        self.RenderBuilding(item)
+        if tool.get('Hidden'):
+          continue
+        prefab = self.prefabs.get(item['Id'].lower())
+        if not prefab:  # TODO: Come up with a better way to do per-faction tools
+          continue
+        if 'Plantable' in prefab:
+          self.RenderNaturalResource(prefab)
+        if 'PlaceableBlockObject' in prefab:
+          self.RenderBuilding(prefab)
 
   def RenderBuilding(self, building: Prefab):
     for r in building.get('Manufactory', {}).get('ProductionRecipeIds', []):
@@ -729,7 +840,7 @@ class GraphGenerator(Generator):
       fontcolor='white',
     )
 
-    self.RenderFaction(self.faction, self.prefabs, self.toolgroups)
+    self.RenderFaction(self.faction, self.prefabs.values(), self.toolgroups)
 
     self.graph.write(f'{filename}.dot', format='raw')
     self.graph.write(f'{filename}.svg', format='svg')
@@ -872,6 +983,9 @@ class HtmlGenerator(Generator):
   def RenderToolGroup(self, toolgroup: ToolGroupSpecification):
     _ = self.gettext
     line = self.doc.line
+    if toolgroup.get('Type') == 'PlantingModeToolGroup':
+      super().RenderToolGroup(toolgroup)
+      return
     with self.tag('div', klass='toolgroup card') as header:
       header.line('div', _(toolgroup['NameLocKey']), klass='name')
       super().RenderToolGroup(toolgroup)
@@ -899,9 +1013,17 @@ class HtmlGenerator(Generator):
         with self.tag('ul', klass='cost'):
           for x in building['Building']['BuildingCost']:
             good = self.goods[x['GoodId'].lower()]
-            lockey = 'DisplayNameLocKey' if x['Amount'] == 1 else 'PluralDisplayNameLocKey'
+            amount = x['Amount']
+            lockey = 'DisplayNameLocKey' if amount == 1 else 'PluralDisplayNameLocKey'
             label = _(good[lockey])
-            line('li', f'{x['Amount']} {label}', ('data-searchable', good['Id'].lower()), ('data-category', 'consumer'))
+            line('li', f'{amount} {label}', ('data-searchable', good['Id'].lower()), ('data-category', 'consumer'))
+
+          if 'GoodConsumingBuilding' in building:
+            good = self.goods[building['GoodConsumingBuilding']['Supply'].lower()]
+            amount = building['GoodConsumingBuilding']['GoodPerHour']
+            lockey = 'DisplayNameLocKey' if amount == 1 else 'PluralDisplayNameLocKey'
+            label = _(good[lockey])
+            # line('li', f'{amount} {label} per hour', ('data-searchable', good['Id'].lower()), ('data-category', 'consumer'))
 
         radius = (
           building.get('RangedEffectBuilding', {}).get('EffectRadius') or
@@ -910,7 +1032,7 @@ class HtmlGenerator(Generator):
           for specs in dict_group_by_id(specs, 'NeedId').values():
             spec = list(specs)[0]
             if spec['NeedId'] is None:  # required for EffectSpecification --> EffectSpecificationPerHour rename
-              logging.warning(f'Missing need in {building['Id']}')
+              logging.warning(f'Empty need in {building['Id']}')
               continue
             need = self.needs[spec['NeedId'].lower()]
             needgroup = self.needgroups[need['NeedGroupId'].lower()]
@@ -1088,6 +1210,9 @@ class TextGenerator(Generator):
 
   def RenderToolGroup(self, toolgroup: ToolGroupSpecification):
     _ = self.gettext
+    if toolgroup.get('Type') == 'PlantingModeToolGroup':
+      super().RenderToolGroup(toolgroup)
+      return
     with self.NewContext(f'{self.prefix}{_(toolgroup['NameLocKey'])}:') as c:
       super().RenderToolGroup(toolgroup)
 
@@ -1282,8 +1407,9 @@ def main():
         needs: dict[str, NeedSpecification] = d['needs']
         recipes: dict[str, RecipeSpecification] = d['recipes']
         toolgroups: dict[str, ToolGroupSpecification] = d['toolgroups']
+        tools: dict[str, ToolSpecification] = d['tools']
         prefabs: dict[str, dict[str, Prefab]] = d['prefabs']
-        if factions and goods and needs and needgroups and recipes and toolgroups and prefabs:
+        if factions and goods and needs and needgroups and recipes and toolgroups and tools and prefabs:
           cached = True
   except:
     logging.warning(f'Missing/corrupt: {cache_file}')
@@ -1294,9 +1420,9 @@ def main():
     needgroups = {s['Id'].lower(): s for s in load_specifications(args, NeedgroupSpecification)}
     needs = {s['Id'].lower(): s for s in load_specifications(args, NeedSpecification)}
     recipes = {s['Id'].lower(): s for s in load_specifications(args, RecipeSpecification)}
-    toolgroups_by_id = {s['Id'].lower(): s for s in load_specifications(args, ToolGroupSpecification)}
-    def ToolGroupKey(g):
-      k = (int(g['Order']),)
+    toolgroups_by_id = {s['Id'].lower(): s for s in load_specifications(args, ToolGroupSpecification, upgrade_toolgroup_specs)}
+    def ToolGroupKey(g: ToolGroupSpecification):
+      k = (g.get('Layout', 'Default'), g['Order'])
       groupId = g.get('GroupId')
       if groupId:
         k = ToolGroupKey(toolgroups_by_id[groupId.lower()]) + k
@@ -1305,6 +1431,8 @@ def main():
     manifests = load_manifests(args)
     metadata = load_metadata(args)
     prefabs = load_prefabs(args, manifests, metadata, factions)
+    tools = {s['Id'].lower(): s for s in load_specifications(args, ToolSpecification, functools.partial(upgrade_tool_specs, prefabs))}
+    tools = {s['Id'].lower(): s for s in sorted(tools.values(), key=lambda t: (ToolGroupKey(toolgroups[t['GroupId'].lower()]), t['Order']))}
     d = dict(
       versions=versions,
       factions=factions,
@@ -1313,6 +1441,7 @@ def main():
       needs=needs,
       recipes=recipes,
       toolgroups=toolgroups,
+      tools=tools,
       prefabs=prefabs,
     )
     with open(cache_file + '.json', 'wt') as f:
@@ -1333,7 +1462,7 @@ def main():
         continue
       logging.info(f'Generating {faction['Id']} in {_('Settings.Language.Name')}: {_(faction['DisplayNameLocKey'])}')
       for cls in generators:
-        gen = cls(args, _, faction, goods, needgroups, needs, recipes, toolgroups, prefabs)  # type: ignore
+        gen = cls(args, _, faction, goods, needgroups, needs, recipes, toolgroups, tools, prefabs)  # type: ignore
         gen.Write(f'out/{language}_{faction['Id']}')
 
 
