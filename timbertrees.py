@@ -5,6 +5,7 @@ import builtins
 import concurrent.futures
 import contextlib
 import csv
+import dataclasses
 import functools
 import hashlib
 import itertools
@@ -250,8 +251,9 @@ def track[T](
   return rich.progress.track(sequence, '%-36s' % description, **kwargs)
 
 
-def load_versions(args: argparse.Namespace) -> list[dict[str, typing.Any]]:
+def load_versions(args: argparse.Namespace) -> tuple[list[dict[str, typing.Any]], dict[str, str]]:
   versions: list[dict[str, typing.Any]] = []
+  prefixes: dict[str, str] = {}
   for i, directory in enumerate(track('Loading versions', args.directories, transient=True)):
     pattern = '../../../mod.json' if i else 'StreamingAssets/VersionNumbers.json'
     logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
@@ -259,9 +261,15 @@ def load_versions(args: argparse.Namespace) -> list[dict[str, typing.Any]]:
     assert len(paths) == 1, f'len({pathlib.Path(directory)!r}.glob({pattern})) == {len(paths)}: {paths}'
     with open(paths[0], 'rt', encoding='utf-8-sig') as f:
       doc = typing.cast(dict, json5.load(f))
-    assert not i or 'UniqueId' in doc, directory
+    if not i:
+      assert 'UniqueId' not in doc, directory
+      prefixes[''] = directory
+    else:
+      assert 'UniqueId' in doc, directory
+      for asset in doc.get('Assets', []):
+        prefixes[asset['Prefix']] = directory
     versions.append(doc)
-  return versions
+  return versions, prefixes
 
 
 def read_metadata_file(directory: str, p: pathlib.Path) -> tuple[str, Metadata]:
@@ -283,23 +291,44 @@ def load_metadata(args: argparse.Namespace) -> dict[str, tuple[str, Metadata]]:
   return metadata
 
 
-def load_manifests(args: argparse.Namespace) -> dict[str, dict[str, str]]:
-  manifests: dict[str, dict[str, str]] = {}
-  for i, directory in enumerate(track('Loading asset manifests', args.directories)):
+@dataclasses.dataclass
+class AssetBundleManifest:
+  directory: str
+  assets_by_bundle_and_name: dict[str, dict[str, str]]
+
+
+def load_manifests(prefixes: dict[str, str]) -> dict[str, AssetBundleManifest]:
+  manifests: dict[str, AssetBundleManifest] = {}
+  for i, prefix in enumerate(track('Loading asset manifests', prefixes, disable=1)):
+    directory = prefixes[prefix]
     if not i:
+      manifests[''] = AssetBundleManifest(str(pathlib.Path(directory).joinpath('Resources')), {})
       continue
     pattern = '../../../assets/*.manifest'
     logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
     paths = [p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False)]
-    assert len(paths) > 0, f'len(glob({pattern})) == {len(paths)}: {paths}'
-    assets = {}
+    if not len(paths):
+      logging.warning(f'No asset manifest found in {directory}')
+    # assert len(paths) > 0, f'len(glob({pattern})) == {len(paths)}: {paths}'
+    # TODO: Load AssetBundleInfos from AssetBundleManifest instead of globbing
+    assets: dict[str, str] = {}
+    assets_by_bundle_and_name: dict[str, dict[str, str]] = {}
+    bundle = AssetBundleManifest(str(pathlib.Path(directory).parent), assets_by_bundle_and_name)
     for p in paths:
       with open(p, 'rt', encoding='utf-8-sig') as f:
         doc = yaml.load(f, yaml.SafeLoader)
-        for asset in doc.get('Assets', []):
-          ap = pathlib.Path(asset)
-          assets[str(ap.parent.joinpath(ap.stem)).lower()] = ap.suffix
-    manifests[directory] = assets
+        if 'Assets' in doc:
+          assets_by_name = {}
+          for asset in doc['Assets']:
+            ap = pathlib.Path(asset)
+            assets[str(ap.parent.joinpath(ap.stem)).lower()] = ap.suffix
+            if ap.suffix == '.prefab':
+              if ap.name.lower() in assets_by_name:
+                logging.warning(f'Duplicate name in {p.resolve()}: {ap} vs {assets_by_name[ap.name.lower()]}')
+              # assert ap.name not in assets_by_name, f'Duplicate stem: {ap} vs {assets_by_name[ap.name.lower()]}'
+              assets_by_name[ap.name.lower()] = str(ap)
+          assets_by_bundle_and_name[p.stem] = assets_by_name
+    manifests[prefix.lower()] = bundle
   return manifests
 
 
@@ -411,8 +440,8 @@ def load_specifications[T: Specification](
       else:
         if name not in merged_specs:
           logging.warning(f'Skipping {p.resolve()} because of missing original')
-          # assert name in merged_specs, name
           continue
+        # assert name in merged_specs, name
       spec = merged_specs.setdefault(name, cls())
       for k, v in doc.items():
         i = spec.get(k, None)
@@ -459,52 +488,62 @@ def resolve_properties[T](
 
 
 def load_prefab(
-    args: argparse.Namespace,
-    manifests: dict[str, dict[str, str]],
+    manifests: dict[str, AssetBundleManifest],
     metadata: dict[str, tuple[str, Metadata]],
     file_path: str,
 ):
-  pattern = f'**/{pathlib.Path(file_path).name}.prefab'
-  for directory in args.directories:
-    paths = list(pathlib.Path(directory).glob(pattern, case_sensitive=False))
-    manifest = manifests.get(directory, {})
-    def GetManifestSuffix(path: pathlib.Path):
-      prefix = path.parent.relative_to(directory).joinpath(path.stem)
-      return manifest.get(f'assets/{str(prefix).lower()}', path.suffix)
-    paths = [path for path in paths if GetManifestSuffix(path).lower() == '.prefab']
-    assert len(paths) <= 1, f'len(glob({pattern})) == {len(paths)}: {paths}'
-    for p in paths:
-      logging.debug(f'Loading {p.relative_to(directory)}')
-      doc = unityparser.UnityDocument.load_yaml(p)
-      entries_by_id: dict[int, unityparser.constants.UnityClass] = {int(e.anchor): e for e in doc.entries}
-      prefab: Prefab = typing.cast(Prefab, dict(Id=doc.entry.m_Name))
+  parts = pathlib.Path(file_path).parts
+  if parts[0].lower() in manifests:
+    assert len(parts) == 3, f'Unexpected prefab: {file_path}'
+    asset_bundle_manifest = manifests[parts[0].lower()]
+    assets_by_name = asset_bundle_manifest.assets_by_bundle_and_name[parts[1].lower()]
+    directory = asset_bundle_manifest.directory
+    if f'{parts[2].lower()}.prefab' not in assets_by_name:
+      logging.warning(f'Prefab not in manifest: {file_path}')
+      pattern = f'**/{pathlib.Path(file_path).name}.prefab'
+    else:
+      pattern = assets_by_name[f'{parts[2].lower()}.prefab']
+  else:
+    asset_bundle_manifest = manifests['']
+    directory = asset_bundle_manifest.directory
+    pattern = f'{file_path}.prefab'
 
-      for component in doc.entry.m_Component:
-        entry = entries_by_id.pop(component['component']['fileID'], None)
-        if not entry:  # already consumed
-          continue
-        if entry.__class_name != 'MonoBehaviour':
-          continue
-        behaviour = typing.cast(MonoBehaviour, entry)
-        if 'guid' not in behaviour.m_Script:
-          logging.warning(f'Missing script for behaviour in {prefab['Id']}, skipping')
-          continue
-        guid = behaviour.m_Script['guid']
-        meta = metadata.get(guid)
-        assert meta, guid
-        properties = behaviour.get_serialized_properties_dict()
-        resolved_properties = resolve_properties(properties, int(doc.entry.anchor), entries_by_id, metadata)
-        prefab[pathlib.Path(meta[0]).stem] = resolved_properties
+  paths = list(pathlib.Path(directory).glob(pattern, case_sensitive=False))
+  assert len(paths) == 1, f'len({pathlib.Path(directory)!r}.glob({pattern})) == {len(paths)}: {paths}'
+  logging.debug(f'Loading {paths[0].relative_to(directory)}')
+  doc = unityparser.UnityDocument.load_yaml(paths[0])
+  entries_by_id: dict[int, unityparser.constants.UnityClass] = {int(e.anchor): e for e in doc.entries}
+  prefab: Prefab = typing.cast(Prefab, dict(Id=doc.entry.m_Name))
 
-      return prefab
-  logging.warning(f'Missing prefab: {file_path}')
-  return None
-  assert False, f'Missing prefab: {file_path}'
+  for component in doc.entry.m_Component:
+    entry = entries_by_id.pop(component['component']['fileID'], None)
+    if not entry:  # already consumed
+      continue
+    if entry.__class_name != 'MonoBehaviour':
+      continue
+    behaviour = typing.cast(MonoBehaviour, entry)
+    # if 'guid' not in behaviour.m_Script:
+    #   logging.warning(f'Missing script for behaviour in {prefab['Id']}, skipping')
+    #   continue
+    guid = behaviour.m_Script['guid']
+    meta = metadata.get(guid)
+    assert meta, f'Missing script {guid} for behaviour in {prefab['Id']}'
+    if not meta:
+      logging.warning(f'Missing script {guid} for behaviour in {prefab['Id']}, skipping')
+      continue
+    properties = behaviour.get_serialized_properties_dict()
+    resolved_properties = resolve_properties(properties, int(doc.entry.anchor), entries_by_id, metadata)
+    prefab[pathlib.Path(meta[0]).stem] = resolved_properties
+
+  if 'Prefab' in prefab:
+    # Fix up naming mismatch for various waterbeaver assets
+    prefab['Id'] = prefab['Prefab']['PrefabName']
+  return prefab
 
 
 def load_prefabs(
     args: argparse.Namespace,
-    manifests: dict[str, dict[str, str]],
+    manifests: dict[str, AssetBundleManifest],
     metadata: dict[str, tuple[str, Metadata]],
     factions: dict[str, FactionSpecification],
 ) -> dict[str, dict[str, Prefab]]:
@@ -513,7 +552,7 @@ def load_prefabs(
 
   prefabcollections = load_specifications(args, PrefabCollectionSpecification)
   commonpaths = list(itertools.chain.from_iterable(typing.cast(list, c['Paths']) for c in prefabcollections))
-  for prefab in track(f'Loading common prefabs', map(load_prefab, *zip(*((args, manifests, metadata, prefab) for prefab in commonpaths))), total=len(commonpaths)):
+  for prefab in track(f'Loading common prefabs', map(load_prefab, *zip(*((manifests, metadata, prefab) for prefab in commonpaths))), total=len(commonpaths)):
     assert prefab and prefab['Id'].lower() not in prefabs['common']
     prefabs['common'][prefab['Id'].lower()] = prefab
 
@@ -527,9 +566,11 @@ def load_prefabs(
       faction['Buildings'],
     ))
     prefabs[key] = {}
-    for prefab in track(f'Loading {faction['Id']} prefabs', map(load_prefab, *zip(*((args, manifests, metadata, prefab) for prefab in faction_prefabs))), total=len(faction_prefabs)):
+    for prefab in track(f'Loading {faction['Id']} prefabs', map(load_prefab, *zip(*((manifests, metadata, prefab) for prefab in faction_prefabs))), total=len(faction_prefabs)):
       assert prefab
       assert prefab['Id'].lower() not in prefabs[key], prefab['Id']
+      if prefab['Id'].lower() in prefabs[key]:
+        breakpoint()
       prefabs[key][prefab['Id'].lower()] = prefab
   return prefabs
 
@@ -546,7 +587,10 @@ def load_translations(args: argparse.Namespace, language: str):
         try:
           reader = csv.DictReader(f, dialect='timberborn')
           for row in reader:
-            assert row['ID'] not in catalog, f'Duplicate key {row['ID']!r} on line {reader.line_num} of {x.resolve()}'
+            if row['ID'] in catalog:
+              logging.warning(f'Duplicate key {row['ID']!r} on line {reader.line_num} of {x.resolve()}')
+              # For duplicate key in WB en_US
+              # assert row['ID'] not in catalog, f'Duplicate key {row['ID']!r} on line {reader.line_num} of {x.resolve()}'
             catalog[row['ID']] = row['Text']
         except Exception as e:
           e.add_note(f'Loading {x.resolve()}')
@@ -1139,6 +1183,7 @@ class HtmlGenerator(Generator):
             good = self.goods[x['Good']['Id'].lower()]
             lockey = 'DisplayNameLocKey' if x['Amount'] == 1 else 'PluralDisplayNameLocKey'
             label = _(good[lockey])
+            # TODO: Consider adding output storage size (for WB Omni recipe small, medium, large storage)
             line('li', f'{x['Amount']} {label}', ('data-searchable', good['Id'].lower()), ('data-category', 'producer'))
 
           if recipe['ProducedSciencePoints'] > 0:
@@ -1388,7 +1433,8 @@ def main():
     handlers=[rich.logging.RichHandler()],
   )
 
-  versions = {s.get('UniqueId', 'timberborn').lower(): s for s in load_versions(args)}
+  version_list, prefixes = load_versions(args)
+  versions = {s.get('UniqueId', 'timberborn').lower(): s for s in version_list}
 
   cached = False
   hash = hashlib.sha256(repr(versions).encode())
@@ -1428,7 +1474,7 @@ def main():
         k = ToolGroupKey(toolgroups_by_id[groupId.lower()]) + k
       return k
     toolgroups = {tg['Id'].lower(): tg for tg in sorted(toolgroups_by_id.values(), key=lambda kg: ToolGroupKey(kg))}
-    manifests = load_manifests(args)
+    manifests = load_manifests(prefixes)
     metadata = load_metadata(args)
     prefabs = load_prefabs(args, manifests, metadata, factions)
     tools = {s['Id'].lower(): s for s in load_specifications(args, ToolSpecification, functools.partial(upgrade_tool_specs, prefabs))}
