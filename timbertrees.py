@@ -31,7 +31,14 @@ class Specification(typing.TypedDict):
   pass
 
 
+# < 0.6.1
 class PrefabCollectionSpecification(Specification):
+  Paths: list[str]
+
+
+# >= 0.6.1
+class PrefabGroupSpecification(Specification):
+  Id: str
   Paths: list[str]
 
 
@@ -102,9 +109,11 @@ class FactionSpecification(Specification):
   Order: int
   DisplayNameLocKey: str
   NewGameFullAvatar: str
-  # These are references to filenames and/or GameObject.Name (not Prefab.PrefabName)
+  # < 0.6.1: These are references to filenames and/or GameObject.Name (not Prefab.PrefabName)
   UniqueNaturalResources: list[str]
   Buildings: list[str]
+  # >= 0.6.1: This is a list of PrefabGroupSpecification Id's
+  PrefabGroups: list[str]
 
 
 class ContinuousEffectSpecification(Specification):
@@ -473,6 +482,10 @@ def resolve_properties[T](
             del v['guid']
             v['filename'] = meta[0]
           elif 'fileID' in v and v['fileID'] != 0:  # local reference
+            if v['fileID'] not in entries_by_id:
+              logging.warning(f'Missing file {v['fileID']} for ref, skipping')
+              r[k[1].upper() + k[2:]] = v
+              continue
             entry = entries_by_id[v['fileID']]
             if entry.__class_name == 'GameObject' or entry.m_GameObject['fileID'] == game_object:  # type: ignore
               del entries_by_id[v['fileID']]  # remove to prevent top-level references
@@ -543,15 +556,24 @@ def load_prefab(
 
 def load_prefabs(
     args: argparse.Namespace,
+    versions: dict[str, typing.Any],
     manifests: dict[str, AssetBundleManifest],
     metadata: dict[str, tuple[str, Metadata]],
     factions: dict[str, FactionSpecification],
 ) -> dict[str, dict[str, Prefab]]:
   map = builtins.map if args.debug else concurrent.futures.ProcessPoolExecutor().map
   prefabs: dict[str, dict[str, Prefab]] = {'common': {}}
+  version = tuple(int(x) for x in versions['timberborn']['CurrentVersion'].split('.'))
 
-  prefabcollections = load_specifications(args, PrefabCollectionSpecification)
-  commonpaths = list(itertools.chain.from_iterable(typing.cast(list, c['Paths']) for c in prefabcollections))
+  if version >= (0, 6, 1):
+    prefabgroups = load_specifications(args, PrefabGroupSpecification)
+    commonpaths = list(itertools.chain.from_iterable(
+      typing.cast(list, g['Paths']) for g in prefabgroups if g['Id'].lower() == 'common'))
+  else:
+    prefabcollections = load_specifications(args, PrefabCollectionSpecification)
+    commonpaths = list(itertools.chain.from_iterable(
+      typing.cast(list, c['Paths']) for c in prefabcollections))
+
   for prefab in track(f'Loading common prefabs', map(load_prefab, *zip(*((manifests, metadata, prefab) for prefab in commonpaths))), total=len(commonpaths)):
     assert prefab and prefab['Id'].lower() not in prefabs['common']
     prefabs['common'][prefab['Id'].lower()] = prefab
@@ -561,10 +583,15 @@ def load_prefabs(
       logging.warning(f'Skipping {faction['Id']} because avatar ends with NO')
       continue
 
-    faction_prefabs = list(itertools.chain(
-      faction['UniqueNaturalResources'],
-      faction['Buildings'],
-    ))
+    if version >= (0, 6, 1):
+      faction_groups = tuple(g.lower() for g in faction['PrefabGroups'])
+      faction_prefabs = list(itertools.chain.from_iterable(
+        typing.cast(list, g['Paths']) for g in prefabgroups if g['Id'].lower() in faction_groups))
+    else:
+      faction_prefabs = list(itertools.chain(
+        faction['UniqueNaturalResources'],
+        faction['Buildings'],
+      ))
     prefabs[key] = {}
     for prefab in track(f'Loading {faction['Id']} prefabs', map(load_prefab, *zip(*((manifests, metadata, prefab) for prefab in faction_prefabs))), total=len(faction_prefabs)):
       assert prefab
@@ -1476,7 +1503,7 @@ def main():
     toolgroups = {tg['Id'].lower(): tg for tg in sorted(toolgroups_by_id.values(), key=lambda kg: ToolGroupKey(kg))}
     manifests = load_manifests(prefixes)
     metadata = load_metadata(args)
-    prefabs = load_prefabs(args, manifests, metadata, factions)
+    prefabs = load_prefabs(args, versions, manifests, metadata, factions)
     tools = {s['Id'].lower(): s for s in load_specifications(args, ToolSpecification, functools.partial(upgrade_tool_specs, prefabs))}
     tools = {s['Id'].lower(): s for s in sorted(tools.values(), key=lambda t: (ToolGroupKey(toolgroups[t['GroupId'].lower()]), t['Order']))}
     d = dict(
