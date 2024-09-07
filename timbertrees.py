@@ -150,7 +150,7 @@ class Building(BaseComponent):
   ScienceCost: int
 
 
-class LabeledPrefab(BaseComponent):
+class LabeledEntitySpec(BaseComponent):
   DisplayNameLocKey: str
 
 
@@ -164,12 +164,12 @@ class PlaceableBlockObject(BaseComponent):
   DevModeTool: int
 
 
-class AreaNeedApplier(BaseComponent):
+class AreaNeedApplierSpec(BaseComponent):
   ApplicationRadius: int
   EffectSpecificationPerHour: NeedApplierEffectSpecificationPerHour
 
 
-class ContinuousEffectBuilding(BaseComponent):
+class ContinuousEffectBuildingSpec(BaseComponent):
   EffectSpecifications: list[ContinuousEffectSpecification]
 
 
@@ -177,11 +177,11 @@ class RangedEffectBuilding(BaseComponent):
   EffectRadius: int
 
 
-class WorkshopRandomNeedApplier(BaseComponent):
+class WorkshopRandomNeedApplierSpec(BaseComponent):
   EffectSpecifications: list[NeedApplierEffectSpecificationPerHour]
 
 
-class Dwelling(BaseComponent):
+class DwellingSpec(BaseComponent):
   MaxBeavers: int
   SleepEffects: list[ContinuousEffectSpecification]
 
@@ -195,7 +195,7 @@ class MechanicalNodeSpecification(BaseComponent):
   PowerOutput: int
 
 
-class PlanterBuilding(BaseComponent):
+class PlanterBuildingSpec(BaseComponent):
   PlantableResourceGroup: str
 
 
@@ -223,7 +223,7 @@ class Ruin(BaseComponent):
   YielderSpecification: YielderSpecification
 
 
-class YieldRemovingBuilding(BaseComponent):
+class YieldRemovingBuildingSpec(BaseComponent):
   ResourceGroup: str
 
 
@@ -235,17 +235,17 @@ class Prefab(typing.TypedDict):
   Id: str
   Building: Building
   Prefab: BasePrefab
-  LabeledPrefab: LabeledPrefab
+  LabeledEntitySpec: LabeledEntitySpec
   NaturalResource: NaturalResource
   PlaceableBlockObject: PlaceableBlockObject
-  AreaNeedApplier: AreaNeedApplier
+  AreaNeedApplierSpec: AreaNeedApplierSpec
   RangedEffectBuilding: RangedEffectBuilding
-  WorkshopRandomNeedApplier: WorkshopRandomNeedApplier
-  Dwelling: Dwelling
+  WorkshopRandomNeedApplierSpec: WorkshopRandomNeedApplierSpec
+  DwellingSpec: DwellingSpec
   WorkplaceSpecification: WorkplaceSpecification
   MechanicalNodeSpecification: MechanicalNodeSpecification
-  PlanterBuilding: PlanterBuilding
-  YieldRemovingBuilding: YieldRemovingBuilding
+  PlanterBuildingSpec: PlanterBuildingSpec
+  YieldRemovingBuildingSpec: YieldRemovingBuildingSpec
   Plantable: Plantable
   Cuttable: Cuttable
   Gatherable: Gatherable
@@ -391,7 +391,7 @@ def upgrade_tool_specs(
           Id=item['Id'],  # item['Prefab']['PrefabName'],
           GroupId=placeableBlockObject['ToolGroupId'],
           Order=placeableBlockObject['ToolOrder'] * 10,
-          NameLocKey=item['LabeledPrefab']['DisplayNameLocKey'],
+          NameLocKey=item['LabeledEntitySpec']['DisplayNameLocKey'],
         )
         if placeableBlockObject['DevModeTool'] == 1:
           tool['DevMode'] = True
@@ -402,7 +402,7 @@ def upgrade_tool_specs(
           Id=item['Id'],  # item['Prefab']['PrefabName'],
           GroupId='Fields' if 'Crop' in item else 'Forestry',
           Order=naturalResource['OrderId'],
-          NameLocKey=item['LabeledPrefab']['DisplayNameLocKey'],
+          NameLocKey=item['LabeledEntitySpec']['DisplayNameLocKey'],
         ))
   for tool in tools:
     tool_specs = specs.setdefault(tool['Id'].lower(), [])
@@ -699,7 +699,7 @@ class Generator:
       key=lambda p: ('Crop' not in p, p['NaturalResource']['OrderId'])
     )
     self.plantable_by_group = dict_group_by_id(prefabs, 'Plantable.ResourceGroup')
-    self.planter_building_by_group = dict_group_by_id(prefabs, 'PlanterBuilding.PlantableResourceGroup')
+    self.planter_building_by_group = dict_group_by_id(prefabs, 'PlanterBuildingSpec.PlantableResourceGroup')
     cuttable_by_group = dict_group_by_id(prefabs, 'Cuttable.YielderSpecification.ResourceGroup')
     gatherable_by_group = dict_group_by_id(prefabs, 'Gatherable.YielderSpecification.ResourceGroup')
     scavengable_by_group = dict_group_by_id(prefabs, 'Ruin.YielderSpecification.ResourceGroup')
@@ -754,7 +754,7 @@ class Generator:
           self.RenderBuilding(prefab)
 
   def RenderBuilding(self, building: Prefab):
-    for r in building.get('Manufactory', {}).get('ProductionRecipeIds', []):
+    for r in building.get('ManufactorySpec', {}).get('ProductionRecipeIds', []):
       self.RenderRecipe(self.recipes[r.lower()])
 
   def RenderNaturalResource(self, resource): ...
@@ -795,12 +795,12 @@ class GraphGenerator(Generator):
       for c in building.get('Building', {}).get('BuildingCost', []):
         building_goods.add(c['GoodId'])
 
-      recipes = building.get('Manufactory', {}).get('ProductionRecipeIds', [])
+      recipes = building.get('ManufactorySpec', {}).get('ProductionRecipeIds', [])
       for r in recipes:
         sg = pydot.Subgraph(
           building['Id'] + ('.' + r if len(recipes) > self.args.graph_grouping_threshold else ''),
           cluster=True,
-          label=f'[{_(toolgroup['NameLocKey'])}]\n{_(building['LabeledPrefab']['DisplayNameLocKey'])}',
+          label=f'[{_(toolgroup['NameLocKey'])}]\n{_(building['LabeledEntitySpec']['DisplayNameLocKey'])}',
           fontsize=self.FONTSIZE,
         )
         self.graph.add_subgraph(sg)
@@ -1040,8 +1040,8 @@ class HtmlGenerator(Generator):
           searchable.append(item)
     with self.tag('tr', ('data-searchable', ' '.join(searchable)), ('data-category', 'producer'), klass='naturalresource'):
       line('td', _(f'Pictogram.Aquatic') if r['WaterNaturalResourceSpecification']['MinWaterHeight'] > 0 else '', klass='name')
-      line('td', _(r['LabeledPrefab']['DisplayNameLocKey']), klass='name')
-      line('td', f'{_('Time.DaysShort').format(r['Growable']['GrowthTimeInDays'])}')
+      line('td', _(r['LabeledEntitySpec']['DisplayNameLocKey']), klass='name')
+      line('td', f'{_('Time.DaysShort').format(r['GrowableSpec']['GrowthTimeInDays'])}')
       line('td', f'{_('Time.DaysShort').format(r['WateredNaturalResourceSpecification']['DaysToDieDry'])}')
       line('td', f'{_('Time.DaysShort').format(r['WaterNaturalResourceSpecification']['DaysToDie'])}')
       if 'Gatherable' in r:
@@ -1065,7 +1065,7 @@ class HtmlGenerator(Generator):
     _ = self.gettext
     line = self.doc.line
     with self.tag('div', klass='building card') as header:
-      name = _(building['LabeledPrefab']['DisplayNameLocKey']).replace('\n', ' ')
+      name = _(building['LabeledEntitySpec']['DisplayNameLocKey']).replace('\n', ' ')
       header.line('div', name, klass='name')
       with self.tag('div', klass='stats'):
         if building['Building']['ScienceCost'] > 0:
@@ -1073,8 +1073,8 @@ class HtmlGenerator(Generator):
           if science >= 1000:
             science = f'{science / 1000:n}k'
           line('div', f'{science}{_(f'Pictogram.Science')}', klass='science')
-        if 'Dwelling' in building:
-          line('div', f'{building['Dwelling']['MaxBeavers']}{_(f'Pictogram.Dwellers')}', klass='dwelling')
+        if 'DwellingSpec' in building:
+          line('div', f'{building['DwellingSpec']['MaxBeavers']}{_(f'Pictogram.Dwellers')}', klass='dwelling')
         if 'WorkplaceSpecification' in building:
           line('div', f'{building['WorkplaceSpecification']['MaxWorkers']}{_(f'Pictogram.Workers')}', klass='workers')
         if 'MechanicalNodeSpecification' in building and building['MechanicalNodeSpecification']['PowerInput'] > 0:
@@ -1098,7 +1098,7 @@ class HtmlGenerator(Generator):
 
         radius = (
           building.get('RangedEffectBuilding', {}).get('EffectRadius') or
-          building.get('AreaNeedApplier', {}).get('ApplicationRadius'))
+          building.get('AreaNeedApplierSpec', {}).get('ApplicationRadius'))
         def RenderEffects(specs):
           for specs in dict_group_by_id(specs, 'NeedId').values():
             spec = list(specs)[0]
@@ -1114,34 +1114,34 @@ class HtmlGenerator(Generator):
             line('li', label, ('data-searchable', need['Id'].lower()), ('data-category', 'consumer' if float(points) < 0 else 'producer'), klass='bad' if float(points) < 0 else 'good')
 
         with self.tag('ul', klass='needs'):
-          area_need = building.get('AreaNeedApplier')
+          area_need = building.get('AreaNeedApplierSpec')
           if area_need:
             RenderEffects([area_need['EffectSpecificationPerHour']])
-          RenderEffects(building.get('Dwelling', {'SleepEffects':[]})['SleepEffects'])
-          RenderEffects(building.get('WorkshopRandomNeedApplier', {'EffectSpecifications':[]})['EffectSpecifications'])
-          RenderEffects(building.get('Attraction', {'EffectSpecifications':[]})['EffectSpecifications'])
-          RenderEffects(building.get('ContinuousEffectBuilding', {'EffectSpecifications':[]})['EffectSpecifications'])
+          RenderEffects(building.get('DwellingSpec', {'SleepEffects':[]})['SleepEffects'])
+          RenderEffects(building.get('WorkshopRandomNeedApplierSpec', {'EffectSpecifications':[]})['EffectSpecifications'])
+          RenderEffects(building.get('AttractionSpec', {'EffectSpecifications':[]})['EffectSpecifications'])
+          RenderEffects(building.get('ContinuousEffectBuildingSpec', {'EffectSpecifications':[]})['EffectSpecifications'])
 
         resources: dict[str, Prefab] = {}
         with self.tag('table') as header:
           with header.tag('tr'):
             line('th', '', klass='name')
-            plantable = building.get('PlanterBuilding')
+            plantable = building.get('PlanterBuildingSpec')
             if plantable:
               plants = self.plantable_by_group[plantable['PlantableResourceGroup'].lower()]
               for p in plants:
-                resources[p['LabeledPrefab']['DisplayNameLocKey']] = p
+                resources[p['LabeledEntitySpec']['DisplayNameLocKey']] = p
               line('th', _(f'Pictogram.Plantable'))
             else:
               plants = None
-            yieldable = building.get('YieldRemovingBuilding')
+            yieldable = building.get('YieldRemovingBuildingSpec')
             if yieldable:
               yield_type, yields = self.yieldable_by_group[yieldable['ResourceGroup'].lower()]
               for y in yields:
                 yplantable = y.get('Plantable')
                 if yplantable and all([self.toolgroups[x['PlaceableBlockObject']['ToolGroupId'].lower()].get('Hidden') for x in self.planter_building_by_group[yplantable['ResourceGroup'].lower()]]):
                   continue
-                resources[y['LabeledPrefab']['DisplayNameLocKey']] = y
+                resources[y['LabeledEntitySpec']['DisplayNameLocKey']] = y
               line('th', _(f'Pictogram.{yield_type}'))
             else:
               yield_type, yields = None, None
@@ -1160,7 +1160,7 @@ class HtmlGenerator(Generator):
             if yields and plant in yields:
               categories.append('consumer')
             with self.tag('tr', ('data-searchable', ' '.join(searchable)), ('data-category', ' '.join(categories))):
-              line('td', _(plant['LabeledPrefab']['DisplayNameLocKey']), klass='name')
+              line('td', _(plant['LabeledEntitySpec']['DisplayNameLocKey']), klass='name')
               if plants:
                 if plant in plants:
                   line('td', _('Time.HoursShort').format(plant['Plantable']['PlantTimeInHours']))
@@ -1265,11 +1265,11 @@ class TextGenerator(Generator):
     if all([self.toolgroups[x['PlaceableBlockObject']['ToolGroupId'].lower()].get('Hidden') for x in self.planter_building_by_group[plantable['ResourceGroup'].lower()]]):
       return
 
-    name = _(r['LabeledPrefab']['DisplayNameLocKey'])
+    name = _(r['LabeledEntitySpec']['DisplayNameLocKey'])
     if r['WaterNaturalResourceSpecification']['MinWaterHeight'] > 0:
       name = f'{_(f'Pictogram.Aquatic')} {name}'
     stats = [
-      f'{_('Time.DaysShort').format(r['Growable']['GrowthTimeInDays'])}{_(f'Pictogram.Grows')}',
+      f'{_('Time.DaysShort').format(r['GrowableSpec']['GrowthTimeInDays'])}{_(f'Pictogram.Grows')}',
       f'{_('Time.DaysShort').format(r['WateredNaturalResourceSpecification']['DaysToDieDry'])}{_(f'Pictogram.Dehydrates')}',
       f'{_('Time.DaysShort').format(r['WaterNaturalResourceSpecification']['DaysToDie'])}{_(f'Pictogram.Drowns')}',
     ]
@@ -1290,10 +1290,10 @@ class TextGenerator(Generator):
 
   def RenderBuilding(self, building: Prefab):
     _ = self.gettext
-    text = _(building['LabeledPrefab']['DisplayNameLocKey']).replace('\n', ' ')
+    text = _(building['LabeledEntitySpec']['DisplayNameLocKey']).replace('\n', ' ')
     stats = []
-    if 'Dwelling' in building:
-      stats.append(f'{building['Dwelling']['MaxBeavers']}{_(f'Pictogram.Dwellers')}')
+    if 'DwellingSpec' in building:
+      stats.append(f'{building['DwellingSpec']['MaxBeavers']}{_(f'Pictogram.Dwellers')}')
     if 'WorkplaceSpecification' in building:
       stats.append(f'{building['WorkplaceSpecification']['MaxWorkers']}{_(f'Pictogram.Workers')}')
     if 'MechanicalNodeSpecification' in building and building['MechanicalNodeSpecification']['PowerInput'] > 0:
@@ -1315,7 +1315,7 @@ class TextGenerator(Generator):
 
       radius = (
         building.get('RangedEffectBuilding', {}).get('EffectRadius') or
-        building.get('AreaNeedApplier', {}).get('ApplicationRadius'))
+        building.get('AreaNeedApplierSpec', {}).get('ApplicationRadius'))
       def RenderEffects(specs):
         for specs in dict_group_by_id(specs, 'NeedId').values():
           spec = list(specs)[0]
@@ -1330,36 +1330,36 @@ class TextGenerator(Generator):
             label = f'{label} {_('Needs.InRange').format(radius)}'
           c.append(f'{self.prefix}{sign} {label}')
 
-      area_need = building.get('AreaNeedApplier')
+      area_need = building.get('AreaNeedApplierSpec')
       if area_need:
         RenderEffects([area_need['EffectSpecificationPerHour']])
-      RenderEffects(building.get('Dwelling', {'SleepEffects':[]})['SleepEffects'])
-      RenderEffects(building.get('WorkshopRandomNeedApplier', {'EffectSpecifications':[]})['EffectSpecifications'])
-      RenderEffects(building.get('Attraction', {'EffectSpecifications':[]})['EffectSpecifications'])
-      RenderEffects(building.get('ContinuousEffectBuilding', {'EffectSpecifications':[]})['EffectSpecifications'])
+      RenderEffects(building.get('DwellingSpec', {'SleepEffects':[]})['SleepEffects'])
+      RenderEffects(building.get('WorkshopRandomNeedApplierSpec', {'EffectSpecifications':[]})['EffectSpecifications'])
+      RenderEffects(building.get('AttractionSpec', {'EffectSpecifications':[]})['EffectSpecifications'])
+      RenderEffects(building.get('ContinuousEffectBuildingSpec', {'EffectSpecifications':[]})['EffectSpecifications'])
 
       resources: dict[str, Prefab] = {}
-      plantable = building.get('PlanterBuilding')
+      plantable = building.get('PlanterBuildingSpec')
       if plantable:
         plants = self.plantable_by_group[plantable['PlantableResourceGroup'].lower()]
         for p in plants:
-          resources[p['LabeledPrefab']['DisplayNameLocKey']] = p
+          resources[p['LabeledEntitySpec']['DisplayNameLocKey']] = p
       else:
         plants = None
-      yieldable = building.get('YieldRemovingBuilding')
+      yieldable = building.get('YieldRemovingBuildingSpec')
       if yieldable:
         yield_type, yields = self.yieldable_by_group[yieldable['ResourceGroup'].lower()]
         for y in yields:
           yplantable = y.get('Plantable')
           if yplantable and all([self.toolgroups[x['PlaceableBlockObject']['ToolGroupId'].lower()].get('Hidden') for x in self.planter_building_by_group[yplantable['ResourceGroup'].lower()]]):
             continue
-          resources[y['LabeledPrefab']['DisplayNameLocKey']] = y
+          resources[y['LabeledEntitySpec']['DisplayNameLocKey']] = y
       else:
         yield_type, yields = None, None
 
       for r in sorted(resources.items(), key=lambda r: r[1].get('NaturalResource', {}).get('OrderId', 0)):
         plant: Prefab = r[1]
-        text = _(plant['LabeledPrefab']['DisplayNameLocKey'])
+        text = _(plant['LabeledEntitySpec']['DisplayNameLocKey'])
         stats = []
         if plants:
           if plant in plants:
