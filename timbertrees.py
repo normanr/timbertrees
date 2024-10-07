@@ -254,19 +254,18 @@ def load_versions(args: argparse.Namespace) -> tuple[list[dict[str, typing.Any]]
   versions: list[dict[str, typing.Any]] = []
   prefixes: dict[str, str] = {}
   for i, directory in enumerate(track('Loading versions', args.directories, transient=True)):
-    pattern = '../../../mod.json' if i else 'StreamingAssets/VersionNumbers.json'
+    pattern = '../../manifest.json' if i else 'Assets/StreamingAssets/VersionNumbers.json'
     logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
     paths = [p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False)]
     assert len(paths) == 1, f'len({pathlib.Path(directory)!r}.glob({pattern})) == {len(paths)}: {paths}'
     with open(paths[0], 'rt', encoding='utf-8-sig') as f:
       doc = typing.cast(dict, json5.load(f))
     if not i:
-      assert 'UniqueId' not in doc, directory
+      assert 'Id' not in doc, directory
       prefixes[''] = directory
     else:
-      assert 'UniqueId' in doc, directory
-      for asset in doc.get('Assets', []):
-        prefixes[asset['Prefix']] = directory
+      assert 'Id' in doc, directory
+      prefixes[doc['Id']] = directory
     versions.append(doc)
   return versions, prefixes
 
@@ -290,52 +289,42 @@ def load_metadata(args: argparse.Namespace) -> dict[str, tuple[str, Metadata]]:
   return metadata
 
 
-@dataclasses.dataclass
-class AssetBundleManifest:
-  directory: str
-  assets_by_bundle_and_name: dict[str, dict[str, str]]
-
-
-def load_manifests(prefixes: dict[str, str]) -> dict[str, AssetBundleManifest]:
-  manifests: dict[str, AssetBundleManifest] = {}
-  for i, prefix in enumerate(track('Loading asset manifests', prefixes, disable=1)):
+def load_manifests(prefixes: dict[str, str]) -> dict[str, str]:
+  manifests: dict[str, str] = {}
+  for i, prefix in enumerate(track('Loading asset manifests', prefixes, disable=True)): # HACK
     directory = prefixes[prefix]
     if not i:
-      manifests[''] = AssetBundleManifest(str(pathlib.Path(directory).joinpath('Resources')), {})
+      manifests[''] = str(pathlib.Path(directory).joinpath('Assets/Resources'))
       continue
-    pattern = '../../../assets/*.manifest'
+    pattern = '../../AssetBundles/*.manifest'
     logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
     paths = [p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False)]
     if not len(paths):
       logging.warning(f'No asset manifest found in {directory}')
     # assert len(paths) > 0, f'len(glob({pattern})) == {len(paths)}: {paths}'
-    # TODO: Load AssetBundleInfos from AssetBundleManifest instead of globbing
     assets: dict[str, str] = {}
-    assets_by_bundle_and_name: dict[str, dict[str, str]] = {}
-    bundle = AssetBundleManifest(str(pathlib.Path(directory).parent), assets_by_bundle_and_name)
     for p in paths:
       with open(p, 'rt', encoding='utf-8-sig') as f:
         doc = yaml.load(f, yaml.SafeLoader)
         if 'Assets' in doc:
-          assets_by_name = {}
           for asset in doc['Assets']:
             ap = pathlib.Path(asset)
-            assets[str(ap.parent.joinpath(ap.stem)).lower()] = ap.suffix
-            if ap.suffix == '.prefab':
-              if ap.name.lower() in assets_by_name:
-                logging.warning(f'Duplicate name in {p.resolve()}: {ap} vs {assets_by_name[ap.name.lower()]}')
-              # assert ap.name not in assets_by_name, f'Duplicate stem: {ap} vs {assets_by_name[ap.name.lower()]}'
-              assets_by_name[ap.name.lower()] = str(ap)
-          assets_by_bundle_and_name[p.stem] = assets_by_name
-    manifests[prefix.lower()] = bundle
+            asset_name = pathlib.Path(*ap.parts[5:])
+            assert asset_name not in manifests
+            pattern = str(pathlib.Path(*ap.parts[:5]))
+            asset_paths = list(pathlib.Path(directory).glob(pattern, case_sensitive=False))
+            assert len(asset_paths) == 1, f'len({pathlib.Path(directory)!r}.glob({pattern})) == {len(asset_paths)}: {asset_paths}'
+            asset_path = asset_paths[0]
+            assets[str(asset_name.parent.joinpath(asset_name.stem)).lower()] = str(asset_path)
+    manifests.update(assets)
   return manifests
 
 
 def upgrade_toolgroup_specs(
-    specs: dict[str, list[tuple[pathlib.Path, bool, bool, ToolGroupSpecification]]]
+    specs: dict[str, list[tuple[pathlib.Path, bool, ToolGroupSpecification]]]
 ):
   for toolgroup_specs in specs.values():
-    for _, _, _, doc in toolgroup_specs:
+    for _, _, doc in toolgroup_specs:
       if 'Order' in doc:
         doc['Order'] = int(doc['Order'])
   toolgroups = [
@@ -360,16 +349,15 @@ def upgrade_toolgroup_specs(
       logging.warning(f'Duplicate {tool['Id']} Tool')
       continue
     # assert not any(i[1] for i in tool_specs)
-    tool_specs.insert(0, (pathlib.Path('builtin'), True, False, tool))
+    tool_specs.insert(0, (pathlib.Path('builtin'), False, tool))
 
 
 def upgrade_tool_specs(
     prefabs: dict[str, dict[str, Prefab]],
-    specs: dict[str, list[tuple[pathlib.Path, bool, bool, ToolSpecification]]]
+    specs: dict[str, list[tuple[pathlib.Path, bool, ToolSpecification]]]
 ):
   for tool_specs in specs.values():
-    for _, original, _, doc in tool_specs:
-      assert not original
+    for _, _, doc in tool_specs:
       if 'Order' in doc:
         doc['Order'] = int(doc['Order'])
   tools = []
@@ -400,53 +388,58 @@ def upgrade_tool_specs(
       logging.warning(f'Duplicate {tool['Id']} Tool')
       continue
     # assert not any(i[1] for i in tool_specs)
-    tool_specs.insert(0, (pathlib.Path('builtin'), True, False, tool))
+    tool_specs.insert(0, (pathlib.Path('builtin'), False, tool))
 
 
 def load_specifications[T: Specification](
     args: argparse.Namespace,
     cls: type[T],
-    upgrade_specs: typing.Callable | None = None,
+    upgrade_specs: typing.Callable[[dict[str, list[tuple[pathlib.Path, bool, T]]]], None] | None = None,
 ) -> list[T]:
 
   all_paths = []
   for i, directory in enumerate(args.directories):
-    pattern = f'../../../Specifications/**/{cls.__name__}.*' if i else f'Resources/specifications/**/{cls.__name__}.*'
+    pattern = f'../../Specifications/**/{cls.__name__}.*' if i else f'Assets/Resources/specifications/**/{cls.__name__}.*'
     logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
     paths = [p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta')]
     assert paths or i or upgrade_specs, pathlib.Path(directory).joinpath(pattern).resolve()
     all_paths.extend((i, path) for path in paths)
 
-  all_specs: dict[str, list[tuple[pathlib.Path, bool, bool, T]]] = {}
-  for i, p in track(f'Loading {cls.__name__.lower().replace('specification', ' specs')}', all_paths):
+  all_specs: dict[str, list[tuple[pathlib.Path, bool, T]]] = {}
+  for i, p in track(f'Loading {cls.__name__.lower().replace('specification', ' specs')}', all_paths, total=len(all_paths)):
     logging.debug(f'Loading {p.resolve()}')
     spec_name, _, name = p.stem.lower().partition('.')
     assert spec_name == cls.__name__.lower()
-    original = not i or name.endswith('.original')
-    replace = name.endswith('.replace')
-    name = name.replace('.original', '').replace('.replace', '')
+    optional = name.endswith('.optional')
+    name = name.replace('.optional', '')
     with open(p, 'rt', encoding='utf-8-sig') as f:
       doc = typing.cast(T, json5.load(f))
-    all_specs.setdefault(name, []).append((p, original, replace, doc))
+    all_specs.setdefault(name, []).append((p, optional, doc))
   if upgrade_specs:
     upgrade_specs(all_specs)
 
   merged_specs: dict[str, T] = {}
   for name, l in all_specs.items():
-    for p, original, replace, doc in sorted(l, key=lambda i: (not i[1], i[2])):
-      if original:
-        assert name not in merged_specs, name
-      else:
+    for p, optional, doc in sorted(l, key=lambda i: (i[1])):
+      if optional:
         if name not in merged_specs:
-          logging.warning(f'Skipping {p.resolve()} because of missing original')
+          logging.warning(f'Skipping optional {p.resolve()}')
           continue
         # assert name in merged_specs, name
       spec = merged_specs.setdefault(name, cls())
       for k, v in doc.items():
+        k, _, m = k.partition('#')
         i = spec.get(k, None)
-        if isinstance(i, list) and not replace:
+        if isinstance(i, list) and m:
           assert isinstance(v, list), f'{name}.{k}: {v}'
-          i.extend(v)
+          if m == 'append':
+            i.extend(v)
+          elif m == 'remove':
+            for x in v:
+              assert x in i
+              i.remove(x)
+          else:
+            assert False, f'Unsupported mode: {name}.{k}#{m}: {v}'
         else:
           spec[k] = v
 
@@ -491,25 +484,15 @@ def resolve_properties[T](
 
 
 def load_prefab(
-    manifests: dict[str, AssetBundleManifest],
+    manifests: dict[str, str],
     metadata: dict[str, tuple[str, Metadata]],
     file_path: str,
 ):
-  parts = pathlib.Path(file_path).parts
-  if parts[0].lower() in manifests:
-    assert len(parts) == 3, f'Unexpected prefab: {file_path}'
-    asset_bundle_manifest = manifests[parts[0].lower()]
-    assets_by_name = asset_bundle_manifest.assets_by_bundle_and_name[parts[1].lower()]
-    directory = asset_bundle_manifest.directory
-    if f'{parts[2].lower()}.prefab' not in assets_by_name:
-      logging.warning(f'Prefab not in manifest: {file_path}')
-      pattern = f'**/{pathlib.Path(file_path).name}.prefab'
-    else:
-      pattern = assets_by_name[f'{parts[2].lower()}.prefab']
+  if file_path.lower() in manifests:
+    directory = manifests[file_path.lower()]
   else:
-    asset_bundle_manifest = manifests['']
-    directory = asset_bundle_manifest.directory
-    pattern = f'{file_path}.prefab'
+    directory = manifests['']
+  pattern = f'{file_path}.prefab'
 
   paths = list(pathlib.Path(directory).glob(pattern, case_sensitive=False))
   assert len(paths) == 1, f'len({pathlib.Path(directory)!r}.glob({pattern})) == {len(paths)}: {paths}'
@@ -525,9 +508,6 @@ def load_prefab(
     if entry.__class_name != 'MonoBehaviour':
       continue
     behaviour = typing.cast(MonoBehaviour, entry)
-    # if 'guid' not in behaviour.m_Script:
-    #   logging.warning(f'Missing script for behaviour in {prefab['Id']}, skipping')
-    #   continue
     guid = behaviour.m_Script['guid']
     meta = metadata.get(guid)
     assert meta, f'Missing script {guid} for behaviour in {prefab['Id']}'
@@ -540,13 +520,15 @@ def load_prefab(
 
   if 'Prefab' in prefab:
     # Fix up naming mismatch for various waterbeaver assets
+    if prefab['Id'] != prefab['Prefab']['PrefabName']:
+      logging.debug(f'Renaming {prefab['Id']} to {prefab['Prefab']['PrefabName']}')
     prefab['Id'] = prefab['Prefab']['PrefabName']
   return prefab
 
 
 def load_prefabs(
     args: argparse.Namespace,
-    manifests: dict[str, AssetBundleManifest],
+    manifests: dict[str, str],
     metadata: dict[str, tuple[str, Metadata]],
     factions: dict[str, FactionSpecification],
 ) -> dict[str, dict[str, Prefab]]:
@@ -583,7 +565,7 @@ def load_translations(args: argparse.Namespace, language: str):
   csv.register_dialect('timberborn', skipinitialspace=True, strict=True)
   catalog: dict[str, str] = {}
   for i, directory in enumerate(args.directories):
-    pattern = f'../../../lang/{language}*.txt' if i else f'Resources/localizations/{language}*.txt'
+    pattern = f'../../Localizations/{language}*.txt' if i else f'Assets/Resources/localizations/{language}*.txt'
     paths = list(pathlib.Path(directory).glob(pattern, case_sensitive=False))
     # assert len(paths) <= 1, f'len(glob({pattern})) == {len(paths)}: {paths}'
     for x in paths:
@@ -591,13 +573,13 @@ def load_translations(args: argparse.Namespace, language: str):
         try:
           reader = csv.DictReader(f, dialect='timberborn')
           for row in reader:
-            if row['ID'] in catalog:
-              logging.warning(f'Duplicate key {row['ID']!r} on line {reader.line_num} of {x.resolve()}')
-              # For duplicate key in WB en_US
-              # assert row['ID'] not in catalog, f'Duplicate key {row['ID']!r} on line {reader.line_num} of {x.resolve()}'
+            # if row['ID'] in catalog:
+            #   logging.warning(f'Duplicate key {row['ID']!r} on line {reader.line_num} of {x.resolve()}')
+            #   # For duplicate key in WB en_US
+            assert row['ID'] not in catalog, f'Duplicate key {row['ID']!r} on line {reader.line_num} of {x.resolve()}'
             catalog[row['ID']] = row['Text']
         except Exception as e:
-          e.add_note(f'Loading {x.resolve()}')
+          e.add_note(f'Loading {x.resolve()}, error after {row}')
           raise
 
   catalog['Pictogram.Dwellers'] = '🛌'
@@ -689,6 +671,15 @@ class Generator:
     self.yieldable_by_group.update({k: ('Cuttable', v) for k, v in cuttable_by_group.items()})
     self.yieldable_by_group.update({k: ('Gatherable', v) for k, v in gatherable_by_group.items()})
     self.yieldable_by_group.update({k: ('Ruin', v) for k, v in scavengable_by_group.items()})
+
+  def IsPlantableResourceGroupVisible(self, group: str) -> bool:
+    def IsToolGroupHidden(prefab: Prefab) -> bool:
+      name = prefab['PlaceableBlockObject']['ToolGroupId']
+      tg = self.toolgroups.get(name.lower())
+      if not tg:
+        return True
+      return bool(tg.get('Hidden'))
+    return not all(IsToolGroupHidden(x) for x in self.planter_building_by_group[group.lower()])
 
   def RenderFaction(self, faction: FactionSpecification):
     self.RenderNaturalResources(self.natural_resources)
@@ -1007,7 +998,7 @@ class HtmlGenerator(Generator):
     _ = self.gettext
     line = self.doc.line
     plantable = r.get('Plantable')
-    if all([self.toolgroups[x['PlaceableBlockObject']['ToolGroupId'].lower()].get('Hidden') for x in self.planter_building_by_group[plantable['ResourceGroup'].lower()]]):
+    if not self.IsPlantableResourceGroupVisible(plantable['ResourceGroup']):
       return
     searchable = [r['Id'].lower()]
     for yield_type in ('Cuttable', 'Gatherable', 'Ruin'):
@@ -1116,7 +1107,7 @@ class HtmlGenerator(Generator):
               yield_type, yields = self.yieldable_by_group[yieldable['ResourceGroup'].lower()]
               for y in yields:
                 yplantable = y.get('Plantable')
-                if yplantable and all([self.toolgroups[x['PlaceableBlockObject']['ToolGroupId'].lower()].get('Hidden') for x in self.planter_building_by_group[yplantable['ResourceGroup'].lower()]]):
+                if yplantable and not self.IsPlantableResourceGroupVisible(yplantable['ResourceGroup']):
                   continue
                 resources[y['LabeledEntitySpec']['DisplayNameLocKey']] = y
               line('th', _(f'Pictogram.{yield_type}'))
@@ -1239,7 +1230,7 @@ class TextGenerator(Generator):
   def RenderNaturalResource(self, r):
     _ = self.gettext
     plantable = r.get('Plantable')
-    if all([self.toolgroups[x['PlaceableBlockObject']['ToolGroupId'].lower()].get('Hidden') for x in self.planter_building_by_group[plantable['ResourceGroup'].lower()]]):
+    if not self.IsPlantableResourceGroupVisible(plantable['ResourceGroup']):
       return
 
     name = _(r['LabeledEntitySpec']['DisplayNameLocKey'])
@@ -1328,7 +1319,7 @@ class TextGenerator(Generator):
         yield_type, yields = self.yieldable_by_group[yieldable['ResourceGroup'].lower()]
         for y in yields:
           yplantable = y.get('Plantable')
-          if yplantable and all([self.toolgroups[x['PlaceableBlockObject']['ToolGroupId'].lower()].get('Hidden') for x in self.planter_building_by_group[yplantable['ResourceGroup'].lower()]]):
+          if yplantable and not self.IsPlantableResourceGroupVisible(yplantable['ResourceGroup']):
             continue
           resources[y['LabeledEntitySpec']['DisplayNameLocKey']] = y
       else:
@@ -1409,7 +1400,7 @@ def main():
 
   languages = []
   for directory in args.directories:
-    pattern = f'Resources/localizations/*.txt'
+    pattern = f'Assets/Resources/localizations/*.txt'
     for p in list(pathlib.Path(directory).glob(pattern, case_sensitive=False)):
       if p.match('*_*') or p.match('reference*'):
         continue
@@ -1438,7 +1429,7 @@ def main():
   )
 
   version_list, prefixes = load_versions(args)
-  versions = {s.get('UniqueId', 'timberborn').lower(): s for s in version_list}
+  versions = {s.get('Id', 'timberborn').lower(): s for s in version_list}
 
   cached = False
   hash = hashlib.sha256(repr(versions).encode())
@@ -1471,7 +1462,9 @@ def main():
     needs = {s['Id'].lower(): s for s in load_specifications(args, NeedSpecification)}
     recipes = {s['Id'].lower(): s for s in load_specifications(args, RecipeSpecification)}
     toolgroups_by_id = {s['Id'].lower(): s for s in load_specifications(args, ToolGroupSpecification, upgrade_toolgroup_specs)}
-    def ToolGroupKey(g: ToolGroupSpecification):
+    def ToolGroupKey(g: ToolGroupSpecification | None):
+      if not g:
+        return ()
       k = (g.get('Layout', 'Default'), g['Order'])
       groupId = g.get('GroupId')
       if groupId:
@@ -1482,7 +1475,7 @@ def main():
     metadata = load_metadata(args)
     prefabs = load_prefabs(args, manifests, metadata, factions)
     tools = {s['Id'].lower(): s for s in load_specifications(args, ToolSpecification, functools.partial(upgrade_tool_specs, prefabs))}
-    tools = {s['Id'].lower(): s for s in sorted(tools.values(), key=lambda t: (ToolGroupKey(toolgroups[t['GroupId'].lower()]), t['Order']))}
+    tools = {s['Id'].lower(): s for s in sorted(tools.values(), key=lambda t: (ToolGroupKey(toolgroups.get(t['GroupId'].lower())), t['Order']))}
     d = dict(
       versions=versions,
       factions=factions,
@@ -1506,13 +1499,13 @@ def main():
   )
   for language in args.languages:
     _ = load_translations(args, language)
-    for faction in factions.values():  # type: ignore
+    for faction in factions.values():
       if faction['NewGameFullAvatar'].endswith('NO'):
         logging.info(f'Skipping {faction['Id']} in {_('Settings.Language.Name')}: {_(faction['DisplayNameLocKey'])}')
         continue
       logging.info(f'Generating {faction['Id']} in {_('Settings.Language.Name')}: {_(faction['DisplayNameLocKey'])}')
       for cls in generators:
-        gen = cls(args, _, faction, goods, needgroups, needs, recipes, toolgroups, tools, prefabs)  # type: ignore
+        gen = cls(args, _, faction, goods, needgroups, needs, recipes, toolgroups, tools, prefabs)
         gen.Write(f'out/{language}_{faction['Id']}')
 
 

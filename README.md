@@ -12,17 +12,17 @@ Then run:
 
 ```sh
 $ python3 timbertrees.py \
-    -d $exported/ExportedProject/Assets/
+    -d $exported/ExportedProject/
 ```
 
 If you'd like to parse assets from mods as well, then follow these additional steps:
- - Make a copy of the mod _outside_ of the BepInEx folder
- - Export the mod's assets to a _subdirectory of the directory containing mod.json_
+ - Make a copy of the mod _outside_ of the Timberborn Mods folder
+ - Export the mod's assets to a _subdirectory of the directory containing manifest.json_
  - Include the additional mod's exported locations in the command, eg:
 
 ```sh
 $ python3 timbertrees.py \
-    -d $exported/ExportedProject/Assets/ \
-    -d $mod1-abc/exported/ExportedProject/Assets/ \
-    -d $mod2_1.2.3-xyz/Mod2/exported/ExportedProject/Assets/
+    -d $exported/ExportedProject/ \
+    -d $mod1-abc/exported/ExportedProject/ \
+    -d $mod2_1.2.3-xyz/Mod2/exported/ExportedProject/
 ```
