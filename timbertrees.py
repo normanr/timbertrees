@@ -423,7 +423,7 @@ def load_specifications[T: Specification](
     for p, optional, doc in sorted(l, key=lambda i: (i[1])):
       if optional:
         if name not in merged_specs:
-          logging.warning(f'Skipping optional {p.resolve()}')
+          logging.debug(f'Skipping optional {p.resolve()}')
           continue
         # assert name in merged_specs, name
       spec = merged_specs.setdefault(name, cls())
@@ -565,21 +565,24 @@ def load_translations(args: argparse.Namespace, language: str):
   csv.register_dialect('timberborn', skipinitialspace=True, strict=True)
   catalog: dict[str, str] = {}
   for i, directory in enumerate(args.directories):
-    pattern = f'../../Localizations/{language}*.txt' if i else f'Assets/Resources/localizations/{language}*.txt'
-    paths = list(pathlib.Path(directory).glob(pattern, case_sensitive=False))
+    pattern_dir = f'../../Localizations/' if i else f'Assets/Resources/localizations/'
+    patterns = [f'{pattern_dir}{language}{suffix}' for suffix in ['*.txt', '*.csv']]
+    paths = []
+    for pattern in patterns:
+      paths.extend(pathlib.Path(directory).glob(pattern, case_sensitive=False))
     # assert len(paths) <= 1, f'len(glob({pattern})) == {len(paths)}: {paths}'
     for x in paths:
       with open(x, 'rt', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f, dialect='timberborn')
         try:
-          reader = csv.DictReader(f, dialect='timberborn')
           for row in reader:
-            # if row['ID'] in catalog:
-            #   logging.warning(f'Duplicate key {row['ID']!r} on line {reader.line_num} of {x.resolve()}')
-            #   # For duplicate key in WB en_US
-            assert row['ID'] not in catalog, f'Duplicate key {row['ID']!r} on line {reader.line_num} of {x.resolve()}'
+            if not i and row['ID'] in catalog:
+              logging.warning(f'Duplicate key {row['ID']!r} on line {reader.line_num} of {x.resolve()}')
+              # For duplicate key in WB en_US
+              assert row['ID'] not in catalog, f'Duplicate key {row['ID']!r} on line {reader.line_num} of {x.resolve()}'
             catalog[row['ID']] = row['Text']
         except Exception as e:
-          e.add_note(f'Loading {x.resolve()}, error after {row}')
+          e.add_note(f'Loading {x.resolve()} on line {reader.line_num}')
           raise
 
   catalog['Pictogram.Dwellers'] = '🛌'
