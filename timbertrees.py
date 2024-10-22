@@ -5,7 +5,6 @@ import builtins
 import concurrent.futures
 import contextlib
 import csv
-import dataclasses
 import functools
 import hashlib
 import itertools
@@ -242,6 +241,12 @@ class Prefab(typing.TypedDict):
   Ruin: Ruin
 
 
+class PartialSpecification[T: Specification](typing.NamedTuple):
+    path: pathlib.Path
+    optional: bool
+    specification: T
+
+
 def track[T](
     description: str,
     sequence: typing.Iterable[T],
@@ -325,7 +330,7 @@ def load_manifests(prefixes: dict[str, str]) -> dict[str, str]:
 
 
 def upgrade_toolgroup_specs(
-    specs: dict[str, list[tuple[pathlib.Path, bool, ToolGroupSpecification]]]
+    specs: dict[str, list[PartialSpecification[ToolGroupSpecification]]]
 ):
   for toolgroup_specs in specs.values():
     for _, _, doc in toolgroup_specs:
@@ -347,24 +352,24 @@ def upgrade_toolgroup_specs(
       NameLocKey='ToolGroups.ForestryPlanting',
     ),
   ]
-  for tool in toolgroups:
-    tool_specs = specs.setdefault(tool['Id'].lower(), [])
-    if any(i[1] for i in tool_specs):
-      logging.warning(f'Duplicate {tool['Id']} Tool')
-      continue
-    # assert not any(i[1] for i in tool_specs)
-    tool_specs.insert(0, (pathlib.Path('builtin'), False, tool))
+  for toolgroup in toolgroups:
+    toolgroup_specs = specs.setdefault(toolgroup['Id'].lower(), [])
+    if any(not i.optional for i in toolgroup_specs):
+      logging.warning(f'Duplicate {toolgroup['Id']} ToolGroup')
+      # continue
+    assert not any(not i.optional for i in toolgroup_specs)
+    toolgroup_specs.insert(0, PartialSpecification(pathlib.Path('builtin'), False, toolgroup))
 
 
 def upgrade_tool_specs(
     prefabs: dict[str, dict[str, Prefab]],
-    specs: dict[str, list[tuple[pathlib.Path, bool, ToolSpecification]]]
+    specs: dict[str, list[PartialSpecification[ToolSpecification]]]
 ):
   for tool_specs in specs.values():
     for _, _, doc in tool_specs:
       if 'Order' in doc:
         doc['Order'] = int(doc['Order'])
-  tools = []
+  tools: list[ToolSpecification] = []
   for lst in prefabs.values():
     for item in lst.values():
       if 'PlaceableBlockObject' in item:
@@ -388,17 +393,18 @@ def upgrade_tool_specs(
         ))
   for tool in tools:
     tool_specs = specs.setdefault(tool['Id'].lower(), [])
-    if any(i[1] for i in tool_specs):
+    if any(not i.optional for i in tool_specs):
       logging.warning(f'Duplicate {tool['Id']} Tool')
-      continue
-    # assert not any(i[1] for i in tool_specs)
-    tool_specs.insert(0, (pathlib.Path('builtin'), False, tool))
+      if tool.get('DevMode', False):
+        continue  # Allow DevPowerGenerator to be specified in the per-faction PrefabGroupSpecification
+    assert not any(not i.optional for i in tool_specs)
+    tool_specs.insert(0, PartialSpecification(pathlib.Path('builtin'), False, tool))
 
 
 def load_specifications[T: Specification](
     args: argparse.Namespace,
     cls: type[T],
-    upgrade_specs: typing.Callable[[dict[str, list[tuple[pathlib.Path, bool, T]]]], None] | None = None,
+    upgrade_specs: typing.Callable[[dict[str, list[PartialSpecification[T]]]], None] | None = None,
 ) -> list[T]:
 
   all_paths = []
@@ -409,7 +415,7 @@ def load_specifications[T: Specification](
     assert paths or i or upgrade_specs, pathlib.Path(directory).joinpath(pattern).resolve()
     all_paths.extend((i, path) for path in paths)
 
-  all_specs: dict[str, list[tuple[pathlib.Path, bool, T]]] = {}
+  all_specs: dict[str, list[PartialSpecification[T]]] = {}
   for i, p in track(f'Loading {cls.__name__.lower().replace('specification', ' specs')}', all_paths, total=len(all_paths)):
     logging.debug(f'Loading {p.resolve()}')
     spec_name, _, name = p.stem.lower().partition('.')
@@ -422,13 +428,13 @@ def load_specifications[T: Specification](
       except Exception as e:
         e.add_note(f'in {paths[0]}')
         raise
-    all_specs.setdefault(name, []).append((p, optional, doc))
+    all_specs.setdefault(name, []).append(PartialSpecification(p, optional, doc))
   if upgrade_specs:
     upgrade_specs(all_specs)
 
   merged_specs: dict[str, T] = {}
   for name, l in all_specs.items():
-    for p, optional, doc in sorted(l, key=lambda i: (i[1])):
+    for p, optional, doc in sorted(l, key=lambda i: (i.optional)):
       if optional:
         if name not in merged_specs:
           logging.debug(f'Skipping optional {p.resolve()}')
@@ -700,8 +706,10 @@ class Generator:
 
   def RenderToolGroup(self, toolgroup: ToolGroupSpecification):
     if toolgroup.get('DevMode'):
+      logging.debug(f'Skipping DevMode ToolGroup {toolgroup['Id']}')
       return
     if toolgroup.get('Hidden'):
+      logging.debug(f'Skipping Hidden ToolGroup {toolgroup['Id']}')
       return
     items: list[tuple[int, typing.Literal[True], ToolGroupSpecification] | tuple[int, typing.Literal[False], ToolSpecification]] = []
     for tool in self.tools_by_group.get(toolgroup['Id'].lower(), []):
@@ -716,11 +724,14 @@ class Generator:
       else:
         tool = typing.cast(ToolSpecification, item)
         if tool.get('DevMode'):
+          logging.debug(f'Skipping DevMode Tool {tool['Id']}')
           continue
         if tool.get('Hidden'):
+          logging.debug(f'Skipping Hidden Tool {tool['Id']}')
           continue
         prefab = self.prefabs.get(item['Id'].lower())
         if not prefab:  # TODO: Come up with a better way to do per-faction tools
+          logging.debug(f'Skipping prefab for {item['Id']}')
           continue
         if 'Plantable' in prefab:
           self.RenderNaturalResource(prefab)
