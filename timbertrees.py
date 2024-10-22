@@ -259,7 +259,11 @@ def load_versions(args: argparse.Namespace) -> tuple[list[dict[str, typing.Any]]
     paths = [p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False)]
     assert len(paths) == 1, f'len({pathlib.Path(directory)!r}.glob({pattern})) == {len(paths)}: {paths}'
     with open(paths[0], 'rt', encoding='utf-8-sig') as f:
-      doc = typing.cast(dict, json5.load(f))
+      try:
+        doc = typing.cast(dict, json5.load(f))
+      except Exception as e:
+        e.add_note(f'in {paths[0]}')
+        raise
     if not i:
       assert 'Id' not in doc, directory
       prefixes[''] = directory
@@ -300,7 +304,7 @@ def load_manifests(prefixes: dict[str, str]) -> dict[str, str]:
     logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
     paths = [p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False)]
     if not len(paths):
-      logging.warning(f'No asset manifest found in {directory}')
+      logging.warning(f'No asset manifests found in {pathlib.Path(directory).joinpath(directory, 'AssetBundles')}')
     # assert len(paths) > 0, f'len(glob({pattern})) == {len(paths)}: {paths}'
     assets: dict[str, str] = {}
     for p in paths:
@@ -368,7 +372,7 @@ def upgrade_tool_specs(
         tool = ToolSpecification(
           Id=item['Id'],  # item['Prefab']['PrefabName'],
           GroupId=placeableBlockObject['ToolGroupId'],
-          Order=placeableBlockObject['ToolOrder'] * 10,
+          Order=placeableBlockObject['ToolOrder'],
           NameLocKey=item['LabeledEntitySpec']['DisplayNameLocKey'],
         )
         if placeableBlockObject['DevModeTool'] == 1:
@@ -413,7 +417,11 @@ def load_specifications[T: Specification](
     optional = name.endswith('.optional')
     name = name.replace('.optional', '')
     with open(p, 'rt', encoding='utf-8-sig') as f:
-      doc = typing.cast(T, json5.load(f))
+      try:
+        doc = typing.cast(T, json5.load(f))
+      except Exception as e:
+        e.add_note(f'in {paths[0]}')
+        raise
     all_specs.setdefault(name, []).append((p, optional, doc))
   if upgrade_specs:
     upgrade_specs(all_specs)
@@ -518,11 +526,6 @@ def load_prefab(
     resolved_properties = resolve_properties(properties, int(doc.entry.anchor), entries_by_id, metadata)
     prefab[pathlib.Path(meta[0]).stem] = resolved_properties
 
-  if 'Prefab' in prefab:
-    # Fix up naming mismatch for various waterbeaver assets
-    if prefab['Id'] != prefab['Prefab']['PrefabName']:
-      logging.debug(f'Renaming {prefab['Id']} to {prefab['Prefab']['PrefabName']}')
-    prefab['Id'] = prefab['Prefab']['PrefabName']
   return prefab
 
 
@@ -655,7 +658,7 @@ class Generator:
     self.toolgroups_by_group = dict_group_by_id(toolgroups.values(), 'GroupId')
     self.tools_by_group = dict_group_by_id(tools.values(), 'GroupId')
     prefabs = list(all_prefabs['common'].values()) + list(all_prefabs[faction['Id'].lower()].values())
-    self.prefabs = {prefab['Id'].lower(): prefab for prefab in prefabs}
+    self.prefabs = {prefab['Id'].lower(): prefab for prefab in prefabs if 'Prefab' in prefab}
     self.natural_resources: list[Prefab] = sorted(
       [p for p in prefabs if 'NaturalResource' in p],
       key=lambda p: ('Crop' not in p, p['NaturalResource']['OrderId'])
