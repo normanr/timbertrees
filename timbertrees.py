@@ -424,6 +424,8 @@ def load_specifications[T: Specification](
     name = name.replace('.optional', '')
     with open(p, 'rt', encoding='utf-8-sig') as f:
       try:
+        # json5 doesn't support raw newlines
+        # Maybe monkey-patch json5.parser.Parser._dqchar__c2_/_sqchar__c2_ to remove the no-eol condition in the seq?
         doc = typing.cast(T, json5.load(f))
       except Exception as e:
         e.add_note(f'in {paths[0]}')
