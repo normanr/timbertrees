@@ -640,11 +640,74 @@ def dict_group_by_id[T](iterable: typing.Iterable[T], key: str) -> dict[str, lis
   return groups
 
 
+class Cell(typing.TypedDict):
+  Faction: FactionSpecification
+  FactionName: str
+  Links: dict[str, str]
+
+
+class Index():
+
+  def __init__(
+      self,
+      args: argparse.Namespace,
+  ):
+    self.args = args
+    self.items: dict[str, dict[str, Cell]] = {}
+
+  def AddItem(self, gettext, faction: FactionSpecification, txt: str, filename: str):
+    lang = self.items.setdefault(gettext('Settings.Language.Name'), {})
+    cell = lang.setdefault(faction['Id'], Cell(
+      Faction=faction,
+      FactionName=gettext(faction['DisplayNameLocKey']),
+      Links={},
+    ))
+    cell['Links'][filename] = txt
+
+  def Write(self, filename):
+    self.stack = [[]]
+    doc = yattag.Doc()
+    doc.asis('<!DOCTYPE html>')
+    with doc.tag('html'):
+      with doc.tag('head'):
+        with doc.tag('meta', charset='utf-8'):
+          pass
+        with doc.tag('meta', name='viewport', content='width=device-width, initial-scale=1'):
+          pass
+        doc.line('title', 'Timbertrees')
+        if self.args.src_link:
+          with doc.tag('link', href='../style.css', rel='stylesheet'):
+            pass
+          with doc.tag('script', src='../script.js'):
+            pass
+        else:
+          with doc.tag('style'):
+            with open('style.css', 'rt') as f:
+              doc.asis('\n' + f.read())
+          with doc.tag('script'):
+            with open('script.js', 'rt') as f:
+              doc.asis('\n' + f.read())
+      with doc.tag('body'):
+        doc.line('h1', 'Timbertrees')
+        with doc.tag('table'):
+          for lang, factions in self.items.items():
+            with doc.tag('tr'):
+              doc.line('th', lang)
+              for cell in factions.values():
+                with doc.tag('td', klass='name'):
+                  for dst, txt in cell['Links'].items():
+                    doc.line('a', txt, href=pathlib.Path(dst).name)
+                    doc.text(' ')
+    with open(filename, 'wt') as f:
+      print(yattag.indent(doc.getvalue()), file=f)
+
+
 class Generator:
 
   def __init__(
       self,
       args: argparse.Namespace,
+      index: Index,
       gettext: typing.Callable[[str, ], str],
       faction: FactionSpecification,
       goods: dict[str, GoodSpecification],
@@ -656,6 +719,7 @@ class Generator:
       all_prefabs: dict[str, dict[str, Prefab]],
   ):
     self.args = args
+    self.index = index
     self.gettext = gettext
     self.faction = faction
     self.goods = goods
@@ -742,6 +806,9 @@ class Generator:
 
   def RenderBuilding(self, building: Prefab):
     for r in building.get('ManufactorySpec', {}).get('ProductionRecipeIds', []):
+      if r.lower() not in self.recipes:
+        logging.warning(f'Skipping missing recipe: {r}')
+        continue
       self.RenderRecipe(self.recipes[r.lower()])
 
   def RenderNaturalResource(self, resource): ...
@@ -792,6 +859,9 @@ class GraphGenerator(Generator):
         )
         self.graph.add_subgraph(sg)
 
+        if r.lower() not in self.recipes:
+          logging.warning(f'Skipping missing recipe: {r}')
+          continue
         self.RenderRecipe(sg, building, building_goods, self.recipes[r.lower()])
 
   def RenderRecipe(self, sg, building, building_goods, recipe: RecipeSpecification):
@@ -902,6 +972,8 @@ class GraphGenerator(Generator):
 
     self.graph.write(f'{filename}.dot', format='raw')
     self.graph.write(f'{filename}.svg', format='svg')
+
+    self.index.AddItem(self.gettext, self.faction, '[svg]', f'{filename}.svg')
 
 
 class HtmlGenerator(Generator):
@@ -1212,6 +1284,8 @@ class HtmlGenerator(Generator):
       self.RenderFaction(self.faction, pathlib.Path(filename))
     with open(f'{filename}.html', 'wt') as f:
       print(yattag.indent(self.doc.getvalue()), file=f)
+    self.index.AddItem(self.gettext, self.faction, self.gettext(self.faction['DisplayNameLocKey']), f'{filename}.html')
+
 
 class TextGenerator(Generator):
 
@@ -1402,6 +1476,7 @@ class TextGenerator(Generator):
     with open(f'{filename}.txt', 'wt') as f:
       for line in lines:
         print(line, file=f)
+    self.index.AddItem(self.gettext, self.faction, '[txt]', f'{filename}.txt')
 
 
 def main():
@@ -1511,9 +1586,10 @@ def main():
     with open(cache_file, 'wb') as f:
       pickle.dump(d, f, protocol=pickle.HIGHEST_PROTOCOL)
 
+  index = Index(args)
   generators = (
-    TextGenerator,
     HtmlGenerator,
+    TextGenerator,
     GraphGenerator,
   )
   for language in args.languages:
@@ -1524,9 +1600,9 @@ def main():
         continue
       logging.info(f'Generating {faction['Id']} in {_('Settings.Language.Name')}: {_(faction['DisplayNameLocKey'])}')
       for cls in generators:
-        gen = cls(args, _, faction, goods, needgroups, needs, recipes, toolgroups, tools, prefabs)
+        gen = cls(args, index, _, faction, goods, needgroups, needs, recipes, toolgroups, tools, prefabs)
         gen.Write(f'out/{language}_{faction['Id']}')
-
+  index.Write('out/index.html')
 
 if __name__ == '__main__':
   try:

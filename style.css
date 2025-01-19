@@ -4,6 +4,9 @@ body, #content {
   width: fit-content;
   text-size-adjust: none;
 }
+a {
+  color: white;
+}
 [data-searchable] {
   cursor: pointer;
   text-decoration: underline dotted;
