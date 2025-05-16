@@ -759,7 +759,7 @@ class Index():
                   for dst, txt in cell['Links'].items():
                     doc.line('a', txt, href=pathlib.Path(dst).name)
                     doc.text(' ')
-    with open(filename, 'wt') as f:
+    with open(filename, 'wt', encoding='utf-8') as f:
       print(yattag.indent(doc.getvalue()), file=f)
 
 
@@ -1344,7 +1344,7 @@ class HtmlGenerator(Generator):
     self.doc.asis('<!DOCTYPE html>')
     with self.doc.tag('html'):
       self.RenderFaction(self.faction, pathlib.Path(filename))
-    with open(f'{filename}.html', 'wt') as f:
+    with open(f'{filename}.html', 'wt', encoding='utf-8') as f:
       print(yattag.indent(self.doc.getvalue()), file=f)
     self.index.AddItem(self.gettext, self.faction, self.gettext(self.faction['FactionSpec']['DisplayNameLocKey']), f'{filename}.html')
 
@@ -1535,7 +1535,7 @@ class TextGenerator(Generator):
     self.stack = [[]]
     self.RenderFaction(self.faction)
     lines, = self.stack
-    with open(f'{filename}.txt', 'wt') as f:
+    with open(f'{filename}.txt', 'wt', encoding='utf-8') as f:
       for line in lines:
         print(line, file=f)
     self.index.AddItem(self.gettext, self.faction, '[txt]', f'{filename}.txt')
@@ -1543,7 +1543,7 @@ class TextGenerator(Generator):
 
 def main():
   parser = argparse.ArgumentParser(add_help=False)
-  parser.add_argument('-d', '--directory', help='location of extracted resources', action='append', dest='directories', default=[])
+  parser.add_argument('-d', '--directory', help='full path to ExportedProject(s)', action='append', dest='directories', default=[], required=True)
   language_arg = parser.add_argument('-l', '--language')
   parser.add_argument('-g', '--graph_grouping_threshold', help='threshold to split buildings with too-many recipes', type=int, default=5)
   parser.add_argument('-q', '--quiet', help='quiet mode (less messages)', action='store_true')
@@ -1564,6 +1564,8 @@ def main():
       if language not in languages:
         languages.append(language)
     languages.sort(key=lambda x: (len(x), x))
+  if not languages:
+    raise SystemExit('No languages found, make sure the directory option points to an ExportedProject')
 
   language_arg.help=f'localization language to use (valid options: {', '.join(['all'] + languages)})'
   parser = argparse.ArgumentParser(parents=[parser])
@@ -1643,7 +1645,7 @@ def main():
       tools=tools,
       prefabs=prefabs,
     )
-    with open(cache_file + '.json', 'wt') as f:
+    with open(cache_file + '.json', 'wt', encoding='utf-8') as f:
       json5.dump(d, f, indent=2, quote_keys=True, trailing_commas=False)
     with open(cache_file, 'wb') as f:
       pickle.dump(d, f, protocol=pickle.HIGHEST_PROTOCOL)
