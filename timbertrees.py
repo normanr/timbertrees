@@ -203,6 +203,12 @@ class WorkshopRandomNeedApplierSpec(BaseComponent):
   Effects: list[NeedApplierEffectPerHour]
 
 
+class GoodConsumingBuildingSpec(BaseComponent):
+  Supply: str
+  Capacity: int
+  GoodPerHour: float
+
+
 class DwellingSpec(BaseComponent):
   MaxBeavers: int
   SleepEffects: list[ContinuousEffectSpec]
@@ -285,6 +291,7 @@ class Prefab(typing.TypedDict):
   AreaNeedApplierSpec: AreaNeedApplierSpec
   RangedEffectBuildingSpec: RangedEffectBuildingSpec
   WorkshopRandomNeedApplierSpec: WorkshopRandomNeedApplierSpec
+  GoodConsumingBuildingSpec: GoodConsumingBuildingSpec
   DwellingSpec: DwellingSpec
   WorkplaceSpec: WorkplaceSpec
   ManufactorySpec: ManufactorySpec
@@ -1210,12 +1217,12 @@ class HtmlGenerator(Generator):
             label = _(good['GoodSpec'][lockey])
             line('li', f'{amount} {label}', ('data-searchable', good['GoodSpec']['Id'].lower()), ('data-category', 'consumer'))
 
-          if 'GoodConsumingBuilding' in building:
-            good = self.goods[building['GoodConsumingBuilding']['Supply'].lower()]
-            amount = building['GoodConsumingBuilding']['GoodPerHour']
+          if 'GoodConsumingBuildingSpec' in building:
+            good = self.goods[building['GoodConsumingBuildingSpec']['Supply'].lower()]
+            amount = building['GoodConsumingBuildingSpec']['GoodPerHour']
             lockey = 'DisplayNameLocKey' if amount == 1 else 'PluralDisplayNameLocKey'
-            label = _(good[lockey])
-            # line('li', f'{amount} {label} per hour', ('data-searchable', good['Id'].lower()), ('data-category', 'consumer'))
+            label = _(good['GoodSpec'][lockey])
+            line('li', f'{amount} {label} per hour', ('data-searchable', good['GoodSpec']['Id'].lower()), ('data-category', 'consumer'))
 
         radius = (
           building.get('RangedEffectBuildingSpec', {}).get('EffectRadius') or
@@ -1435,6 +1442,13 @@ class TextGenerator(Generator):
         lockey = 'DisplayNameLocKey' if cost['Amount'] == 1 else 'PluralDisplayNameLocKey'
         label = _(good['GoodSpec'][lockey])
         c.append(f'{self.prefix}▶ {cost['Amount']} {label}')
+
+      if 'GoodConsumingBuildingSpec' in building:
+        good = self.goods[building['GoodConsumingBuildingSpec']['Supply'].lower()]
+        amount = building['GoodConsumingBuildingSpec']['GoodPerHour']
+        lockey = 'DisplayNameLocKey' if amount == 1 else 'PluralDisplayNameLocKey'
+        label = _(good['GoodSpec'][lockey])
+        c.append(f'{self.prefix}▶ {amount} {label} per hour')
 
       radius = (
         building.get('RangedEffectBuildingSpec', {}).get('EffectRadius') or
