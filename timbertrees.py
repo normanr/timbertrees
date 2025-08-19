@@ -743,10 +743,10 @@ class Index():
             pass
         else:
           with doc.tag('style'):
-            with open('style.css', 'rt') as f:
+            with open('style.css', 'rt', encoding='utf-8-sig') as f:
               doc.asis('\n' + f.read())
           with doc.tag('script'):
-            with open('script.js', 'rt') as f:
+            with open('script.js', 'rt', encoding='utf-8-sig') as f:
               doc.asis('\n' + f.read())
       with doc.tag('body'):
         doc.line('h1', 'Timbertrees')
@@ -1047,11 +1047,11 @@ class HtmlGenerator(Generator):
     super().__init__(*args, **kwargs)
     if not self.style:
       logging.debug('Loading style.css')
-      with open('style.css', 'rt') as f:
+      with open('style.css', 'rt', encoding='utf-8-sig') as f:
         type(self).style = f.read()
     if not self.script:
       logging.debug('Loading script.js')
-      with open('script.js', 'rt') as f:
+      with open('script.js', 'rt', encoding='utf-8-sig') as f:
         type(self).script = f.read()
 
   class Header:
