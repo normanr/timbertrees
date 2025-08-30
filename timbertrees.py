@@ -367,7 +367,7 @@ def load_metadata(args: argparse.Namespace) -> dict[str, tuple[str, Metadata]]:
 
 def load_manifests(prefixes: dict[str, str]) -> dict[str, str]:
   manifests: dict[str, str] = {}
-  for i, prefix in enumerate(track('Loading asset manifests', prefixes, disable=True)): # HACK
+  for i, prefix in enumerate(track('Loading asset manifests', prefixes)):
     directory = prefixes[prefix]
     if not i:
       manifests[''] = str(pathlib.Path(directory).joinpath('Assets/Resources'))
@@ -384,14 +384,15 @@ def load_manifests(prefixes: dict[str, str]) -> dict[str, str]:
         doc = yaml.load(f, yaml.SafeLoader)
         if 'Assets' in doc:
           for asset in doc['Assets']:
-            ap = pathlib.Path(asset)
-            asset_name = pathlib.Path(*ap.parts[5:])
-            assert asset_name not in manifests
-            pattern = str(pathlib.Path(*ap.parts[:5]))
+            asset_path = pathlib.PurePosixPath(asset)
+            mod_path = pathlib.PurePosixPath(*asset_path.parts[5:])
+            asset_id = str(mod_path.parent.joinpath(mod_path.stem)).lower()
+            assert asset_id not in manifests
+            pattern = str(pathlib.PurePosixPath(*asset_path.parts[:5]))
             asset_paths = list(pathlib.Path(directory).glob(pattern, case_sensitive=False))
             assert len(asset_paths) == 1, f'len({pathlib.Path(directory)!r}.glob({pattern})) == {len(asset_paths)}: {asset_paths}'
             asset_path = asset_paths[0]
-            assets[str(asset_name.parent.joinpath(asset_name.stem)).lower()] = str(asset_path)
+            assets[asset_id] = str(asset_path)
     manifests.update(assets)
   return manifests
 
