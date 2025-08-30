@@ -1040,8 +1040,8 @@ class GraphGenerator(Generator):
 
     self.RenderFaction(self.faction, self.prefabs.values(), self.toolgroups)
 
-    self.graph.write(f'{filename}.dot', format='raw')
-    self.graph.write(f'{filename}.svg', format='svg')
+    self.graph.write(f'{filename}.dot', format='raw', encoding='utf-8')
+    self.graph.write(f'{filename}.svg', format='svg', encoding='utf-8')
 
     self.index.AddItem(self.gettext, self.faction, '[svg]', f'{filename}.svg')
 
