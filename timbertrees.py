@@ -430,7 +430,7 @@ def upgrade_toolgroup_blueprints(
 
 
 def upgrade_tool_blueprints(
-    prefabs: dict[str, dict[str, Prefab]],
+    prefabs: dict[str, Prefab],
     blueprints: dict[str, list[PartialBlueprint[ToolBlueprint]]]
 ):
   for tool_specs in blueprints.values():
@@ -438,33 +438,31 @@ def upgrade_tool_blueprints(
       if 'Order' in doc['ToolSpec']:
         doc['ToolSpec']['Order'] = int(doc['ToolSpec']['Order'])
   tools: list[ToolBlueprint] = []
-  for lst in prefabs.values():
-    for item in lst.values():
-      if 'PlaceableBlockObjectSpec' in item:
-        spec = item['PlaceableBlockObjectSpec']
-        tool = ToolBlueprint(ToolSpec=ToolSpec(
-          Id=item['Id'],  # item['Prefab']['PrefabName'],
-          GroupId=spec['ToolGroupId'],
-          Order=spec['ToolOrder'],
-          NameLocKey=item['LabeledEntitySpec']['DisplayNameLocKey'],
-        ))
-        if spec['DevModeTool'] == 1:
-          tool['ToolSpec']['DevMode'] = True
-        tools.append(tool)
-      if 'PlantableSpec' in item:
-        spec = item['NaturalResourceSpec']
-        tools.append(ToolBlueprint(ToolSpec=ToolSpec(
-          Id=item['Id'],  # item['Prefab']['PrefabName'],
-          GroupId='Fields' if 'CropSpec' in item else 'Forestry',
-          Order=spec['Order'],
-          NameLocKey=item['LabeledEntitySpec']['DisplayNameLocKey'],
-        )))
+  for item in prefabs.values():
+    if 'PlaceableBlockObjectSpec' in item:
+      spec = item['PlaceableBlockObjectSpec']
+      tool = ToolBlueprint(ToolSpec=ToolSpec(
+        Id=item['Id'],  # item['Prefab']['PrefabName'],
+        GroupId=spec['ToolGroupId'],
+        Order=spec['ToolOrder'],
+        NameLocKey=item['LabeledEntitySpec']['DisplayNameLocKey'],
+      ))
+      if spec['DevModeTool'] == 1:
+        tool['ToolSpec']['DevMode'] = True
+      tools.append(tool)
+    if 'PlantableSpec' in item:
+      spec = item['NaturalResourceSpec']
+      tools.append(ToolBlueprint(ToolSpec=ToolSpec(
+        Id=item['Id'],  # item['Prefab']['PrefabName'],
+        GroupId='Fields' if 'CropSpec' in item else 'Forestry',
+        Order=spec['Order'],
+        NameLocKey=item['LabeledEntitySpec']['DisplayNameLocKey'],
+      )))
   for tool in tools:
     tool_specs = blueprints.setdefault(tool['ToolSpec']['Id'].lower(), [])
     if any(not i.optional for i in tool_specs):
       logging.warning(f'Duplicate {tool['ToolSpec']['Id']} Tool')
-      if tool['ToolSpec'].get('DevMode', False):
-        continue  # Allow DevPowerGenerator to be specified in the per-faction PrefabGroupSpecification
+      # continue
     assert not any(not i.optional for i in tool_specs), tool_specs
     tool_specs.insert(0, PartialBlueprint(pathlib.Path('builtin'), False, tool))
 
@@ -606,14 +604,15 @@ def load_prefab(
   return prefab
 
 
-def load_prefabs(
+def load_prefabs_and_tools(
     args: argparse.Namespace,
     manifests: dict[str, str],
     metadata: dict[str, tuple[str, Metadata]],
     factions: dict[str, FactionBlueprint],
-) -> dict[str, dict[str, Prefab]]:
+) -> tuple[dict[str, dict[str, Prefab]], dict[str, list[ToolBlueprint]]]:
   map = builtins.map if args.debug else concurrent.futures.ProcessPoolExecutor().map
   prefabs: dict[str, dict[str, Prefab]] = {'common': {}}
+  tools: dict[str, list[ToolBlueprint]] = {}
 
   prefabgroups = load_blueprints(args, PrefabGroupBlueprint)
   commonpaths = list(itertools.chain.from_iterable(
@@ -622,6 +621,7 @@ def load_prefabs(
   for prefab in track(f'Loading common prefabs', map(load_prefab, *zip(*((manifests, metadata, prefab) for prefab in commonpaths))), total=len(commonpaths)):
     assert prefab and prefab['Id'].lower() not in prefabs['common']
     prefabs['common'][prefab['Id'].lower()] = prefab
+  tools['common'] = load_blueprints(args, ToolBlueprint, functools.partial(upgrade_tool_blueprints, prefabs['common']))
 
   for key, faction in factions.items():
     if faction['FactionSpec']['NewGameFullAvatar'].endswith('NO'):
@@ -638,7 +638,8 @@ def load_prefabs(
       if prefab['Id'].lower() in prefabs[key]:
         breakpoint()
       prefabs[key][prefab['Id'].lower()] = prefab
-  return prefabs
+    tools[key] = load_blueprints(args, ToolBlueprint, functools.partial(upgrade_tool_blueprints, prefabs[key]))
+  return prefabs, tools
 
 
 def load_translations(args: argparse.Namespace, language: str):
@@ -785,7 +786,7 @@ class Generator:
       recipes: dict[str, RecipeBlueprint],
       toolgroups: dict[str, ToolGroupBlueprint],
       tools: dict[str, ToolBlueprint],
-      all_prefabs: dict[str, dict[str, Prefab]],
+      prefabs: dict[str, Prefab],
   ):
     self.args = args
     self.index = index
@@ -798,17 +799,16 @@ class Generator:
     self.toolgroups = toolgroups
     self.toolgroups_by_group = dict_group_by_id(toolgroups.values(), 'ToolGroupSpec.GroupId')
     self.tools_by_group = dict_group_by_id(tools.values(), 'ToolSpec.GroupId')
-    prefabs = list(all_prefabs['common'].values()) + list(all_prefabs[faction['FactionSpec']['Id'].lower()].values())
-    self.prefabs = {prefab['Id'].lower(): prefab for prefab in prefabs if 'PrefabSpec' in prefab}
+    self.prefabs = {prefab['Id'].lower(): prefab for prefab in prefabs.values() if 'PrefabSpec' in prefab}
     self.natural_resources: list[Prefab] = sorted(
-      [p for p in prefabs if 'NaturalResourceSpec' in p],
+      [p for p in prefabs.values() if 'NaturalResourceSpec' in p],
       key=lambda p: ('CropSpec' not in p, p['NaturalResourceSpec']['Order'])
     )
-    self.plantable_by_group = dict_group_by_id(prefabs, 'PlantableSpec.ResourceGroup')
-    self.planter_building_by_group = dict_group_by_id(prefabs, 'PlanterBuildingSpec.PlantableResourceGroup')
-    cuttable_by_group = dict_group_by_id(prefabs, 'CuttableSpec.YielderSpec.ResourceGroup')
-    gatherable_by_group = dict_group_by_id(prefabs, 'GatherableSpec.YielderSpec.ResourceGroup')
-    scavengable_by_group = dict_group_by_id(prefabs, 'RuinSpec.YielderSpec.ResourceGroup')
+    self.plantable_by_group = dict_group_by_id(prefabs.values(), 'PlantableSpec.ResourceGroup')
+    self.planter_building_by_group = dict_group_by_id(prefabs.values(), 'PlanterBuildingSpec.PlantableResourceGroup')
+    cuttable_by_group = dict_group_by_id(prefabs.values(), 'CuttableSpec.YielderSpec.ResourceGroup')
+    gatherable_by_group = dict_group_by_id(prefabs.values(), 'GatherableSpec.YielderSpec.ResourceGroup')
+    scavengable_by_group = dict_group_by_id(prefabs.values(), 'RuinSpec.YielderSpec.ResourceGroup')
     self.yieldable_by_group: dict[
       str,
       tuple[typing.Literal['CuttableSpec'], list[Prefab]] |
@@ -1621,7 +1621,7 @@ def main():
         needs: dict[str, NeedBlueprint] = d['needs']
         recipes: dict[str, RecipeBlueprint] = d['recipes']
         toolgroups: dict[str, ToolGroupBlueprint] = d['toolgroups']
-        tools: dict[str, ToolBlueprint] = d['tools']
+        tools: dict[str, dict[str, ToolBlueprint]] = d['tools']
         prefabs: dict[str, dict[str, Prefab]] = d['prefabs']
         if factions and goods and needs and needgroups and recipes and toolgroups and tools and prefabs:
           cached = True
@@ -1646,9 +1646,10 @@ def main():
     toolgroups = {tg['ToolGroupSpec']['Id'].lower(): tg for tg in sorted(toolgroups_by_id.values(), key=lambda kg: ToolGroupKey(kg))}
     manifests = load_manifests(prefixes)
     metadata = load_metadata(args)
-    prefabs = load_prefabs(args, manifests, metadata, factions)
-    tools = {b['ToolSpec']['Id'].lower(): b for b in load_blueprints(args, ToolBlueprint, functools.partial(upgrade_tool_blueprints, prefabs))}
-    tools = {b['ToolSpec']['Id'].lower(): b for b in sorted(tools.values(), key=lambda t: (ToolGroupKey(toolgroups.get(t['ToolSpec']['GroupId'].lower())), t['ToolSpec']['Order']))}
+    prefabs, tool_lists = load_prefabs_and_tools(args, manifests, metadata, factions)
+    tools: dict[str, dict[str, ToolBlueprint]] = {}
+    for key in tool_lists:
+      tools[key] = {b['ToolSpec']['Id'].lower(): b for b in sorted(tool_lists[key], key=lambda t: (ToolGroupKey(toolgroups.get(t['ToolSpec']['GroupId'].lower())), t['ToolSpec']['Order']))}
     d = dict(
       versions=versions,
       factions=factions,
@@ -1678,8 +1679,10 @@ def main():
         logging.info(f'Skipping {faction['FactionSpec']['Id']} in {_('Settings.Language.Name')}: {_(faction['FactionSpec']['DisplayNameLocKey'])}')
         continue
       logging.info(f'Generating {faction['FactionSpec']['Id']} in {_('Settings.Language.Name')}: {_(faction['FactionSpec']['DisplayNameLocKey'])}')
+      faction_tools = tools['common'] | tools[faction['FactionSpec']['Id'].lower()]
+      faction_prefabs = prefabs['common'] | prefabs[faction['FactionSpec']['Id'].lower()]
       for cls in generators:
-        gen = cls(args, index, _, faction, goods, needgroups, needs, recipes, toolgroups, tools, prefabs)
+        gen = cls(args, index, _, faction, goods, needgroups, needs, recipes, toolgroups, faction_tools, faction_prefabs)
         gen.Write(f'out/{language}_{faction['FactionSpec']['Id']}')
   index.Write('out/index.html')
 
