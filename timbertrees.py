@@ -387,7 +387,11 @@ def load_manifests(prefixes: dict[str, str]) -> dict[str, str]:
             asset_path = pathlib.PurePosixPath(asset)
             mod_path = pathlib.PurePosixPath(*asset_path.parts[5:])
             asset_id = str(mod_path.parent.joinpath(mod_path.stem)).lower()
-            assert asset_id not in manifests
+            if asset_id in manifests:
+              logging.warning(f'Duplicate {asset} asset, conflicts with {manifests[asset_id]}')
+              if asset_path.suffix.lower() == '.png':
+                continue
+            assert asset_id not in manifests, asset_id
             pattern = str(pathlib.PurePosixPath(*asset_path.parts[:5]))
             asset_paths = list(pathlib.Path(directory).glob(pattern, case_sensitive=False))
             assert len(asset_paths) == 1, f'len({pathlib.Path(directory)!r}.glob({pattern})) == {len(asset_paths)}: {asset_paths}'
