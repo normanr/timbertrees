@@ -26,3 +26,7 @@ $ python3 timbertrees.py \
     -d $mod1-abc/exported/ExportedProject/ \
     -d $mod2_1.2.3-xyz/Mod2/exported/ExportedProject/
 ```
+
+## Troubleshooting:
+
+On Windows you may need to set `HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled` to `1` to allow Python to find and read files with very long path names (typically shows up as `FileNotFoundError` when loading unity metadata).
