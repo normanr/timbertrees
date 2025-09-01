@@ -1584,6 +1584,18 @@ class TextGenerator(Generator):
     self.index.AddItem(self.gettext, self.faction, '[txt]', f'{filename}.txt')
 
 
+def expand_directories(directories: list[str]):
+  result = []
+  for directory in directories:
+    pattern = pathlib.Path(directory).expanduser()
+    for parent in pattern.parents:
+      if parent.exists(): break
+    paths = list(parent.glob(str(pattern.relative_to(parent))))
+    assert len(paths) > 0, f'len(glob({directory})) > 0'
+    result.extend(paths)
+  return result
+
+
 def main():
   parser = argparse.ArgumentParser(add_help=False)
   parser.add_argument('-d', '--directory', help='full path to ExportedProject(s)', action='append', dest='directories', default=[], required=True)
@@ -1597,6 +1609,7 @@ def main():
   hparser = argparse.ArgumentParser(parents=[parser], add_help=False)
   hparser.add_argument('-h', '--help', action='store_true')
   args = hparser.parse_args()
+  args.directories = expand_directories(args.directories)
 
   languages = []
   for directory in args.directories:
@@ -1614,6 +1627,7 @@ def main():
   language_arg.help=f'localization language to use (valid options: {', '.join(['all'] + languages)})'
   parser = argparse.ArgumentParser(parents=[parser])
   args = parser.parse_args()
+  args.directories = expand_directories(args.directories)
 
   if args.language == 'all':
     args.languages = languages
