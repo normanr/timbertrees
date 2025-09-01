@@ -11,6 +11,7 @@ import itertools
 import json5
 import logging
 import operator
+import os
 import pathlib
 import pickle
 import pydot
@@ -1586,6 +1587,7 @@ class TextGenerator(Generator):
 def main():
   parser = argparse.ArgumentParser(add_help=False)
   parser.add_argument('-d', '--directory', help='full path to ExportedProject(s)', action='append', dest='directories', default=[], required=True)
+  parser.add_argument('-o', '--output', help='output path', default='out')
   language_arg = parser.add_argument('-l', '--language')
   parser.add_argument('-g', '--graph_grouping_threshold', help='threshold to split buildings with too-many recipes', type=int, default=5)
   parser.add_argument('-q', '--quiet', help='quiet mode (less messages)', action='store_true')
@@ -1693,6 +1695,7 @@ def main():
     with open(cache_file, 'wb') as f:
       pickle.dump(d, f, protocol=pickle.HIGHEST_PROTOCOL)
 
+  os.makedirs(args.output, exist_ok=True)
   index = Index(args)
   generators = (
     HtmlGenerator,
@@ -1710,8 +1713,8 @@ def main():
       faction_prefabs = prefabs['common'] | prefabs[faction['FactionSpec']['Id'].lower()]
       for cls in generators:
         gen = cls(args, index, _, faction, goods, needgroups, needs, recipes, toolgroups, faction_tools, faction_prefabs)
-        gen.Write(f'out/{language}_{faction['FactionSpec']['Id']}')
-  index.Write('out/index.html')
+        gen.Write(f'{args.output}/{language}_{faction['FactionSpec']['Id']}')
+  index.Write(f'{args.output}/index.html')
 
 if __name__ == '__main__':
   try:
