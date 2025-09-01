@@ -96,6 +96,7 @@ class RecipeSpec(Spec):
 class RecipeBlueprint(Blueprint):
   RecipeSpec: RecipeSpec
 
+
 # TimberAPI specific and documented at https://timberapi.com/tools/
 class ToolSpec(Spec):
   Id: str
@@ -113,18 +114,19 @@ class ToolBlueprint(Blueprint):
 # TimberAPI enhanced and documented at https://timberapi.com/tool_groups/
 class ToolGroupSpec(Spec):
   Id: str
-  Layout: str
   Order: int
   NameLocKey: str
   # Added by TimberAPI
   Type: typing.NotRequired[str]
   GroupId: typing.NotRequired[str]
+  Layout: typing.NotRequired[str]
   DevMode: typing.NotRequired[bool]
   Hidden: typing.NotRequired[bool]
 
 
 class ToolGroupBlueprint(Blueprint):
   ToolGroupSpec: ToolGroupSpec
+
 
 class FactionSpec(Spec):
   Id: str
@@ -406,22 +408,24 @@ def upgrade_toolgroup_blueprints(
 ):
   for toolgroup_specs in blueprints.values():
     for _, _, doc in toolgroup_specs:
+      if 'TimberApiToolGroupSpec' in doc:
+        doc.setdefault('ToolGroupSpec', {}).update(doc['TimberApiToolGroupSpec'])
       if 'Order' in doc['ToolGroupSpec']:
         doc['ToolGroupSpec']['Order'] = int(doc['ToolGroupSpec']['Order'])
   toolgroups = [
     ToolGroupBlueprint(ToolGroupSpec=ToolGroupSpec(
       Id='Fields',
-      Layout='Blue',
       Order=20,
-      Type='PlantingModeToolGroup',
       NameLocKey='ToolGroups.FieldsPlanting',
+      Type='PlantingModeToolGroup',
+      Layout='Blue',
     )),
     ToolGroupBlueprint(ToolGroupSpec=ToolGroupSpec(
       Id='Forestry',
-      Layout='Blue',
       Order=30,
-      Type='PlantingModeToolGroup',
       NameLocKey='ToolGroups.ForestryPlanting',
+      Type='PlantingModeToolGroup',
+      Layout='Blue',
     )),
   ]
   for toolgroup in toolgroups:
@@ -471,6 +475,34 @@ def upgrade_tool_blueprints(
     tool_specs.insert(0, PartialBlueprint(pathlib.Path('builtin'), False, tool))
 
 
+def merge_into_spec(
+    name: str,
+    spec: Blueprint | dict,
+    json: typing.ItemsView[str, object],
+):
+  for k, v in json:
+    k, _, m = k.partition('#')
+    i = spec.get(k, None)
+    if isinstance(i, list) and m:
+      assert isinstance(v, list), f'{name}.{k}: {v}'
+      if m == 'append':
+        i.extend(v)
+      elif m == 'remove':
+        for x in v:
+          if x not in i:
+            logging.warning(f'No {x} in {name}.{k}')
+            continue
+          assert x in i, f'{name}.{k}: {x}'
+          i.remove(x)
+      else:
+        assert False, f'Unsupported mode: {name}.{k}#{m}: {v}'
+    elif isinstance(i, dict):
+      assert isinstance(v, dict), f'{name}.{k}: {v}'
+      merge_into_spec(f'{name}.{k}', i, v.items())
+    else:
+      spec[k] = v
+
+
 def load_blueprints[T: Blueprint](
     args: argparse.Namespace,
     cls: type[T],
@@ -483,6 +515,10 @@ def load_blueprints[T: Blueprint](
     pattern = f'../../Blueprints/**/{blueprint}.*' if i else f'Assets/Resources/blueprints/**/{blueprint}.*'
     logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
     paths = [p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta')]
+    if i: # HACK Handle legacy filenames for Waterbeavers
+      pattern = f'../../Blueprints/**/{blueprint}Specification.*'
+      logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
+      paths.extend(p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta'))
     assert paths or i or upgrade_specs, pathlib.Path(directory).joinpath(pattern).resolve()
     all_paths.extend((i, path) for path in paths)
 
@@ -490,7 +526,8 @@ def load_blueprints[T: Blueprint](
   for i, p in track(f'Loading {cls.__name__.lower().replace('blueprint', ' blueprints')}', all_paths, total=len(all_paths)):
     logging.debug(f'Loading {p.resolve()}')
     blueprint_name, _, name = p.stem.lower().partition('.')
-    assert blueprint_name + 'blueprint' == cls.__name__.lower()
+    # assert blueprint_name + 'blueprint' == cls.__name__.lower(), f'{blueprint_name}blueprint == {cls.__name__.lower()}'
+    assert blueprint_name + 'blueprint' == cls.__name__.lower() or blueprint_name.replace('specification', 'blueprint') == cls.__name__.lower(), f'{blueprint_name}blueprint == {cls.__name__.lower()}'  # HACK for Waterbeavers
     optional = name.endswith('.optional')
     name = name.replace('.optional', '')
     with open(p, 'rt', encoding='utf-8-sig') as f:
@@ -514,21 +551,7 @@ def load_blueprints[T: Blueprint](
           continue
         # assert name in merged_specs, name
       spec = merged_specs.setdefault(name, cls())
-      for k, v in doc.items():
-        k, _, m = k.partition('#')
-        i = spec.get(k, None)
-        if isinstance(i, list) and m:
-          assert isinstance(v, list), f'{name}.{k}: {v}'
-          if m == 'append':
-            i.extend(v)
-          elif m == 'remove':
-            for x in v:
-              assert x in i
-              i.remove(x)
-          else:
-            assert False, f'Unsupported mode: {name}.{k}#{m}: {v}'
-        else:
-          spec[k] = v
+      merge_into_spec(name, spec, doc.items())
 
   return [s for s in merged_specs.values()]
 
