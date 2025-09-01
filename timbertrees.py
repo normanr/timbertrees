@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
 import argparse
+import braceexpand
 import builtins
 import concurrent.futures
 import contextlib
@@ -501,6 +502,7 @@ def merge_into_spec(
       assert isinstance(v, dict), f'{name}.{k}: {v}'
       merge_into_spec(f'{name}.{k}', i, v.items())
     else:
+      assert i is None or type(i) == type(v), f'{name}.{k}: {type(i)} vs {type(v)}'
       spec[k] = v
 
 
@@ -1590,9 +1592,10 @@ def expand_directories(directories: list[str]):
     pattern = pathlib.Path(directory).expanduser()
     for parent in pattern.parents:
       if parent.exists(): break
-    paths = list(parent.glob(str(pattern.relative_to(parent))))
-    assert len(paths) > 0, f'len(glob({directory})) > 0'
-    result.extend(paths)
+    for path in braceexpand.braceexpand(str(pattern.relative_to(parent)), escape=False):
+      paths = list(parent.glob(path))
+      assert len(paths) > 0, f'len(glob({parent.joinpath(path)})) > 0'
+      result.extend(paths)
   return result
 
 

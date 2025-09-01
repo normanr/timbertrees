@@ -1,17 +1,18 @@
-[tool.poetry]
+[project]
 name = "timbertrees"
 version = "0.1.0"
 description = ""
-authors = ["Norman Rasmussen <norman@rasmussen.co.za>"]
+authors = [{name = "Norman Rasmussen", email = "norman@rasmussen.co.za>"}]
 readme = "README.md"
-
-[tool.poetry.dependencies]
-python = "^3.12"
-unityparser = "^3.0.1"
-pydot = "^1.4.2"
-json5 = "^0.9.14"
-yattag = "^1.15.2"
-rich = "^13.7.0"
+requires-python = ">= 3.12"
+dependencies = [
+    "unityparser (>=3,<4)",
+    "pydot",
+    "json5",
+    "yattag",
+    "rich",
+    "braceexpand",
+]
 
 [build-system]
 requires = ["poetry-core"]
