@@ -727,7 +727,7 @@ def load_translations(args: argparse.Namespace, language: str):
       return catalog[message]
     if message.endswith('DisplayName'):
       suffix = 's' if message.endswith('PluralDisplayName') else ''
-      guess = message.rpartition('.')[0].rpartition('.')[2]
+      guess = message.rpartition('.')[0].partition('.')[2]
       return f'Untranslated: {guess}{suffix}'
     return f'Untranslated: {message}'
 
