@@ -46,7 +46,7 @@ a {
 .recipe {
   background-color: #22362a;
 }
-table {
+.card table {
   width: 100%;
   border-collapse: collapse;
 }

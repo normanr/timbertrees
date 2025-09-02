@@ -343,9 +343,11 @@ def load_versions(args: argparse.Namespace) -> tuple[list[dict[str, typing.Any]]
     if not i:
       assert 'Id' not in doc, directory
       prefixes[''] = directory
+      logging.info('Loading version %s of %s', doc['CurrentVersion'], 'Timberborn')
     else:
       assert 'Id' in doc, directory
       prefixes[doc['Id']] = directory
+      logging.info('Loading version %s of %s', doc['Version'], doc['Name'])
     versions.append(doc)
   return versions, prefixes
 
@@ -774,7 +776,7 @@ class Index():
     ))
     cell['Links'][filename] = txt
 
-  def Write(self, filename):
+  def Write(self, filename, versions):
     self.stack = [[]]
     doc = yattag.Doc()
     doc.asis('<!DOCTYPE html>')
@@ -788,14 +790,9 @@ class Index():
         if self.args.src_link:
           with doc.tag('link', href='../style.css', rel='stylesheet'):
             pass
-          with doc.tag('script', src='../script.js'):
-            pass
         else:
           with doc.tag('style'):
             with open('style.css', 'rt', encoding='utf-8-sig') as f:
-              doc.asis('\n' + f.read())
-          with doc.tag('script'):
-            with open('script.js', 'rt', encoding='utf-8-sig') as f:
               doc.asis('\n' + f.read())
       with doc.tag('body'):
         doc.line('h1', 'Timbertrees')
@@ -808,6 +805,8 @@ class Index():
                   for dst, txt in cell['Links'].items():
                     doc.line('a', txt, href=pathlib.Path(dst).name)
                     doc.text(' ')
+        with doc.tag('script'):
+          doc.asis(f'var manifests = {json5.dumps(versions, indent=2, trailing_commas=False)};')
     with open(filename, 'wt', encoding='utf-8') as f:
       print(yattag.indent(doc.getvalue()), file=f)
 
@@ -1741,7 +1740,7 @@ def main():
       for cls in generators:
         gen = cls(args, index, _, faction, goods, needgroups, needs, recipes, toolgroups, faction_tools, faction_prefabs)
         gen.Write(f'{args.output}/{language}_{faction['FactionSpec']['Id']}')
-  index.Write(f'{args.output}/index.html')
+  index.Write(f'{args.output}/index.html', list(versions.values()))
 
 if __name__ == '__main__':
   try:
