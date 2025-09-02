@@ -514,10 +514,15 @@ def load_blueprints[T: Blueprint](
 
   all_paths = []
   for i, directory in enumerate(args.directories):
+    # TODO This should iterate over all files and index by available Specs instead
     blueprint = cls.__name__.removesuffix('Blueprint')
     pattern = f'../../Blueprints/**/{blueprint}.*' if i else f'Assets/Resources/blueprints/**/{blueprint}.*'
     logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
     paths = [p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta')]
+    if i and blueprint == 'ToolGroup': # HACK Handle alternate filenames for TimberAPI
+      pattern = f'../../Blueprints/**/TimberApiToolGroup.*'
+      logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
+      paths.extend(p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta'))
     if i: # HACK Handle legacy filenames for Waterbeavers
       pattern = f'../../Blueprints/**/{blueprint}Specification.*'
       logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
@@ -530,7 +535,11 @@ def load_blueprints[T: Blueprint](
     logging.debug(f'Loading {p.resolve()}')
     blueprint_name, _, name = p.stem.lower().partition('.')
     # assert blueprint_name + 'blueprint' == cls.__name__.lower(), f'{blueprint_name}blueprint == {cls.__name__.lower()}'
-    assert blueprint_name + 'blueprint' == cls.__name__.lower() or blueprint_name.replace('specification', 'blueprint') == cls.__name__.lower(), f'{blueprint_name}blueprint == {cls.__name__.lower()}'  # HACK for Waterbeavers
+    assert (
+      blueprint_name + 'blueprint' == cls.__name__.lower() or 
+      blueprint_name.replace('timberapi', '') + 'blueprint' == cls.__name__.lower() or 
+      blueprint_name.replace('specification', 'blueprint') == cls.__name__.lower()
+    ), f'{blueprint_name}blueprint == {cls.__name__.lower()}'  # HACK for Waterbeavers
     optional = name.endswith('.optional')
     name = name.replace('.optional', '')
     with open(p, 'rt', encoding='utf-8-sig') as f:
@@ -623,10 +632,11 @@ def load_prefab(
     behaviour = typing.cast(MonoBehaviour, entry)
     guid = behaviour.m_Script['guid']
     meta = metadata.get(guid)
-    assert meta, f'Missing script {guid} for behaviour in {prefab['Id']}'
+    # assert meta, f'Missing script {guid} for behaviour in {prefab['Id']}'  # Whitepaws
     if not meta:
       logging.warning(f'Missing script {guid} for behaviour in {prefab['Id']}, skipping')
-      continue
+      meta = [f'unresolved:{guid}']
+      # continue
     properties = behaviour.get_serialized_properties_dict()
     resolved_properties = resolve_properties(properties, int(doc.entry.anchor), entries_by_id, metadata)
     prefab[pathlib.Path(meta[0]).stem] = resolved_properties
