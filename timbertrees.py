@@ -903,14 +903,10 @@ class Generator:
         if tool['ToolSpec'].get('Hidden'):
           logging.debug(f'Skipping Hidden Tool {tool['ToolSpec']['Id']}')
           continue
-        prefab = self.prefabs.get(tool['ToolSpec']['Id'].lower())
-        if not prefab:  # TODO: Come up with a better way to do per-faction tools
-          logging.debug(f'Skipping prefab for {tool['ToolSpec']['Id']}')
-          continue
+        prefab = self.prefabs[tool['ToolSpec']['Id'].lower()]
         if 'PlantableSpec' in prefab:
           self.RenderNaturalResource(prefab)
         if 'PlaceableBlockObjectSpec' in prefab:
-          if 'BuildingSpec' not in prefab: return  # FIXME
           self.RenderBuilding(prefab)
 
   def RenderBuilding(self, building: Prefab):
