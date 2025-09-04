@@ -336,7 +336,7 @@ def load_versions(args: argparse.Namespace) -> tuple[list[dict[str, typing.Any]]
     assert len(paths) == 1, f'len({pathlib.Path(directory)!r}.glob({pattern})) == {len(paths)}: {paths}'
     with open(paths[0], 'rt', encoding='utf-8-sig') as f:
       try:
-        doc = typing.cast(dict, json5.load(f))
+        doc = typing.cast(dict, json5.load(f, strict=False))
       except Exception as e:
         e.add_note(f'in {paths[0]}')
         raise
@@ -546,9 +546,7 @@ def load_blueprints[T: Blueprint](
     name = name.replace('.optional', '')
     with open(p, 'rt', encoding='utf-8-sig') as f:
       try:
-        # json5 doesn't support raw newlines
-        # Maybe monkey-patch json5.parser.Parser._dqchar__c2_/_sqchar__c2_ to remove the no-eol condition in the seq?
-        doc = typing.cast(T, json5.load(f))
+        doc = typing.cast(T, json5.load(f, strict=False))
       except Exception as e:
         e.add_note(f'in {paths[0]}')
         raise
