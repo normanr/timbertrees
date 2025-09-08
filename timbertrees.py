@@ -521,11 +521,11 @@ def load_blueprints[T: Blueprint](
     pattern = f'../../Blueprints/**/{blueprint}.*' if i else f'Assets/Resources/blueprints/**/{blueprint}.*'
     logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
     paths = [p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta')]
-    if i and blueprint == 'ToolGroup': # HACK Handle alternate filenames for TimberAPI
+    if i and blueprint == 'ToolGroup':  # HACK Handle alternate filenames for TimberAPI
       pattern = f'../../Blueprints/**/TimberApiToolGroup.*'
       logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
       paths.extend(p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta'))
-    if i: # HACK Handle legacy filenames for Waterbeavers
+    if i:  # HACK Handle legacy filenames for Waterbeavers
       pattern = f'../../Blueprints/**/{blueprint}Specification.*'
       logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
       paths.extend(p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta'))
@@ -619,7 +619,7 @@ def load_prefab(
   paths = list(pathlib.Path(directory).glob(pattern, case_sensitive=False))
   assert len(paths) == 1, f'len({pathlib.Path(directory)!r}.glob({pattern})) == {len(paths)}: {paths}'
   logging.debug(f'Loading {paths[0].relative_to(directory)}')
-  doc = unityparser.UnityDocument.load_yaml(paths[0])
+  doc = unityparser.UnityDocument.load_yaml(paths[0], try_preserve_types=True)
   entries_by_id: dict[int, unityparser.constants.UnityClass] = {int(e.anchor): e for e in doc.entries}
   prefab: Prefab = typing.cast(Prefab, dict(Id=doc.entry.m_Name))
 
