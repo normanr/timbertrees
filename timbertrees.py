@@ -949,8 +949,8 @@ class GraphGenerator(Generator):
         continue
 
       building_goods = set()
-      for c in building.get('Building', {}).get('BuildingCost', []):
-        building_goods.add(c['GoodId'])
+      for c in building.get('BuildingSpec', {}).get('BuildingCost', []):
+        building_goods.add(c['GoodId'].lower())
 
       recipes = building.get('ManufactorySpec', {}).get('ProductionRecipeIds', [])
       for r in recipes:
@@ -984,7 +984,7 @@ class GraphGenerator(Generator):
         building['Id'] + '.' + recipe['RecipeSpec']['Id'],
         label=amount,
         labeltooltip=f'{_(good['GoodSpec']['DisplayNameLocKey' if amount == 1 else 'PluralDisplayNameLocKey'])} --> {_(recipe['RecipeSpec']['DisplayLocKey'])}',
-        style='dashed' if good['GoodSpec']['Id'] in building_goods else 'solid',
+        style='dashed' if good['GoodSpec']['Id'].lower() in building_goods else 'solid',
         color='#b30000',
       ))
 
@@ -992,7 +992,7 @@ class GraphGenerator(Generator):
       if x['Id'].lower() not in self.goods:
         continue
       good = self.goods[x['Id'].lower()]
-      #if good['Id'] in building_goods:
+      #if good['Id'].lower() in building_goods:
       #  continue
       self.graph.add_node(pydot.Node(
         good['GoodSpec']['Id'],
@@ -1004,7 +1004,7 @@ class GraphGenerator(Generator):
         building['Id'] + '.' + recipe['RecipeSpec']['Id'],
         label=x['Amount'],
         labeltooltip=f'{_(good['GoodSpec']['DisplayNameLocKey' if x['Amount'] == 1 else 'PluralDisplayNameLocKey'])} --> {_(recipe['RecipeSpec']['DisplayLocKey'])}',
-        style='dashed' if good['GoodSpec']['Id'] in building_goods else 'solid',
+        style='dashed' if good['GoodSpec']['Id'].lower() in building_goods else 'solid',
         color='#b30000',
       ))
 
@@ -1734,6 +1734,7 @@ def main():
       for cls in generators:
         gen = cls(args, index, _, faction, goods, needgroups, needs, recipes, toolgroups, faction_tools, faction_prefabs)
         gen.Write(f'{args.output}/{language}_{faction['FactionSpec']['Id']}')
+  logging.info('Generating index')
   index.Write(f'{args.output}/index.html', list(versions.values()))
 
 if __name__ == '__main__':
