@@ -20,8 +20,6 @@ import re
 import rich.logging
 import rich.progress
 import typing
-import unityparser
-import unityparser.constants
 import yattag
 import yaml
 
@@ -35,13 +33,13 @@ class Blueprint(typing.TypedDict):
   pass
 
 
-class PrefabGroupSpec(Spec):
-  Id: str
-  Paths: list[str]
+class TemplateCollectionSpec(Spec):
+  CollectionId: str
+  Blueprints: list[str]
 
 
-class PrefabGroupBlueprint(Blueprint):
-  PrefabGroupSpec: PrefabGroupSpec
+class TemplateCollectionBlueprint(Blueprint):
+  TemplateCollectionSpec: TemplateCollectionSpec
 
 
 class GoodSpec(Spec):
@@ -80,14 +78,14 @@ class GoodAmount(typing.TypedDict):
 
 
 class GoodAmountSpec(Spec):
-  GoodId: str
+  Id: str
   Amount: int
 
 
 class RecipeSpec(Spec):
   Id: str
   DisplayLocKey: str
-  CycleDurationInHours: int
+  CycleDurationInHours: float
   Ingredients: list[GoodAmount]
   Products: list[GoodAmount]
   Fuel: str
@@ -114,10 +112,12 @@ class ToolBlueprint(Blueprint):
 
 
 # TimberAPI enhanced and documented at https://timberapi.com/tool_groups/
-class ToolGroupSpec(Spec):
+class BlockObjectToolGroupSpec(Spec):
   Id: str
   Order: int
   NameLocKey: str
+  Icon: str
+  FallbackGroup: bool
   # Added by TimberAPI
   Type: typing.NotRequired[str]
   GroupId: typing.NotRequired[str]
@@ -126,8 +126,8 @@ class ToolGroupSpec(Spec):
   Hidden: typing.NotRequired[bool]
 
 
-class ToolGroupBlueprint(Blueprint):
-  ToolGroupSpec: ToolGroupSpec
+class BlockObjectToolGroupBlueprint(Blueprint):
+  BlockObjectToolGroupSpec: BlockObjectToolGroupSpec
 
 
 class FactionSpec(Spec):
@@ -135,7 +135,7 @@ class FactionSpec(Spec):
   Order: int
   DisplayNameLocKey: str
   NewGameFullAvatar: str
-  PrefabGroups: list[str]
+  TemplateCollectionIds: list[str]
 
 
 class FactionBlueprint(Blueprint):
@@ -147,148 +147,134 @@ class ContinuousEffectSpec(Spec):
   PointsPerHour: float
 
 
-class NeedApplierEffectPerHour(Spec):
+class NeedApplierEffectSpec(Spec):
   NeedId: str
   Points: float
-  ProbabilityPerHour: float
+  Probability: str
 
 
-class Metadata(typing.TypedDict):
-  guid: str
-
-
-class MonoReferece(typing.TypedDict):
-  fileID: int
-  guid: str
-  type: int
-
-
-class MonoBehaviour(unityparser.constants.UnityClass):
-  m_Script: MonoReferece
-
-
-class BaseComponent(typing.TypedDict):
-  pass
-
-
-class BuildingSpec(BaseComponent):
+class BuildingSpec(Spec):
   BuildingCost: list[GoodAmountSpec]
   ScienceCost: int
 
 
-class LabeledEntitySpec(BaseComponent):
+class LabeledEntitySpec(Spec):
   DisplayNameLocKey: str
 
 
-class NaturalResourceSpec(BaseComponent):
+class NaturalResourceSpec(Spec):
   Order: int
 
 
-class PlaceableBlockObjectSpec(BaseComponent):
+class PlaceableBlockObjectSpec(Spec):
   ToolGroupId: str
   ToolOrder: int
   DevModeTool: int
 
 
-class AreaNeedApplierSpec(BaseComponent):
+class AreaNeedApplierSpec(Spec):
   ApplicationRadius: int
-  EffectPerHour: NeedApplierEffectPerHour
+  Effects: NeedApplierEffectSpec
 
 
-class ContinuousEffectBuildingSpec(BaseComponent):
+class ContinuousEffectBuildingSpec(Spec):
   Effects: list[ContinuousEffectSpec]
 
 
-class RangedEffectBuildingSpec(BaseComponent):
+class RangedEffectBuildingSpec(Spec):
   EffectRadius: int
 
 
-class WorkshopRandomNeedApplierSpec(BaseComponent):
-  Effects: list[NeedApplierEffectPerHour]
+class WorkshopRandomNeedApplierSpec(Spec):
+  Effects: list[NeedApplierEffectSpec]
 
 
-class GoodConsumingBuildingSpec(BaseComponent):
-  Supply: str
-  Capacity: int
+class ConsumedGoodSpec(Spec):
+  GoodId: str
   GoodPerHour: float
 
 
-class DwellingSpec(BaseComponent):
+class GoodConsumingBuildingSpec(Spec):
+  ConsumedGoods: list[ConsumedGoodSpec]
+  FullInventoryWorkHours: int
+
+
+class DwellingSpec(Spec):
   MaxBeavers: int
   SleepEffects: list[ContinuousEffectSpec]
 
 
-class WorkplaceSpec(BaseComponent):
+class WorkplaceSpec(Spec):
   MaxWorkers: int
 
 
-class ManufactorySpec(BaseComponent):
+class ManufactorySpec(Spec):
   ProductionRecipeIds: list[str]
 
 
-class MechanicalNodeSpec(BaseComponent):
+class MechanicalNodeSpec(Spec):
   PowerInput: int
   PowerOutput: int
 
 
-class PlanterBuildingSpec(BaseComponent):
+class PlanterBuildingSpec(Spec):
   PlantableResourceGroup: str
 
 
-class PlantableSpec(BaseComponent):
+class PlantableSpec(Spec):
   ResourceGroup: str
   PlantTimeInHours: float
 
 
-class YielderSpec(BaseComponent):
+class YielderSpec(Spec):
   Yield: GoodAmountSpec
   RemovalTimeInHours: float
   ResourceGroup: str
 
 
-class CuttableSpec(BaseComponent):
+class CuttableSpec(Spec):
   YielderSpec: YielderSpec
 
 
-class GatherableSpec(BaseComponent):
+class GatherableSpec(Spec):
   YieldGrowthTimeInDays: float
   YielderSpec: YielderSpec
 
 
-class GrowableSpec(BaseComponent):
+class GrowableSpec(Spec):
   GrowthTimeInDays: float
 
 
-class RuinSpec(BaseComponent):
+class RuinSpec(Spec):
   YielderSpec: YielderSpec
 
 
-class CropSpec(BaseComponent):
+class CropSpec(Spec):
   pass
 
 
-class YieldRemovingBuildingSpec(BaseComponent):
+class YieldRemovingBuildingSpec(Spec):
   ResourceGroup: str
 
 
-class PrefabSpec(BaseComponent):
-  PrefabName: str
+class TemplateSpec(Spec):
+  TemplateName: str
 
 
-class WateredNaturalResourceSpec(BaseComponent):
+class WateredNaturalResourceSpec(Spec):
   DaysToDieDry: float
 
 
-class FloodableNaturalResourceSpec(BaseComponent):
+class FloodableNaturalResourceSpec(Spec):
   MinWaterHeight: int
   MaxWaterHeight: int
   DaysToDie: float
 
 
-class Prefab(typing.TypedDict):
+class TemplateBlueprint(typing.TypedDict):
   Id: str
   BuildingSpec: BuildingSpec
-  PrefabSpec: PrefabSpec
+  TemplateSpec: TemplateSpec
   LabeledEntitySpec: LabeledEntitySpec
   NaturalResourceSpec: NaturalResourceSpec
   PlaceableBlockObjectSpec: PlaceableBlockObjectSpec
@@ -323,7 +309,7 @@ def track[T](
     sequence: typing.Iterable[T],
     **kwargs,
 ) -> typing.Iterable[T]:
-  return rich.progress.track(sequence, '%-36s' % description, **kwargs)
+  return rich.progress.track(sequence, '%-39s' % description, **kwargs)
 
 
 def load_versions(args: argparse.Namespace) -> tuple[list[dict[str, typing.Any]], dict[str, str]]:
@@ -352,31 +338,12 @@ def load_versions(args: argparse.Namespace) -> tuple[list[dict[str, typing.Any]]
   return versions, prefixes
 
 
-def read_metadata_file(directory: str, p: pathlib.Path) -> tuple[str, Metadata]:
-  logging.debug(f'Loading {p.relative_to(directory)}')
-  with open(p, 'rt', encoding='utf-8-sig') as f:
-    return p.relative_to(directory).stem, yaml.load(f, yaml.SafeLoader)
-
-
-def load_metadata(args: argparse.Namespace) -> dict[str, tuple[str, Metadata]]:
-  map = builtins.map if args.debug else concurrent.futures.ProcessPoolExecutor().map
-  metadata: dict[str, tuple[str, Metadata]] = {}
-  pattern = f'**/*.meta'
-  all_paths = []
-  for directory in args.directories:
-    paths = list(pathlib.Path(directory).glob(pattern, case_sensitive=False))
-    all_paths.extend((directory, path) for path in paths)
-  for p, meta in track(f'Loading unity metadata', map(read_metadata_file, *zip(*all_paths)), total=len(all_paths)):
-    metadata[meta['guid']] = (p, meta)
-  return metadata
-
-
 def load_manifests(prefixes: dict[str, str]) -> dict[str, str]:
   manifests: dict[str, str] = {}
   for i, prefix in enumerate(track('Loading asset manifests', prefixes)):
     directory = prefixes[prefix]
     if not i:
-      manifests[''] = str(pathlib.Path(directory).joinpath('Assets/Resources'))
+      manifests[''] = str(pathlib.Path(directory).joinpath('Assets/StreamingAssets/Modding/Blueprints'))
       continue
     pattern = '../../AssetBundles/*.manifest'
     logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
@@ -408,41 +375,46 @@ def load_manifests(prefixes: dict[str, str]) -> dict[str, str]:
 
 
 def upgrade_toolgroup_blueprints(
-    blueprints: dict[str, list[PartialBlueprint[ToolGroupBlueprint]]]
+    blueprints: dict[str, list[PartialBlueprint[BlockObjectToolGroupBlueprint]]]
 ):
   for toolgroup_specs in blueprints.values():
     for _, _, doc in toolgroup_specs:
       if 'TimberApiToolGroupSpec' in doc:
-        doc.setdefault('ToolGroupSpec', {}).update(doc['TimberApiToolGroupSpec'])
-      if 'Order' in doc['ToolGroupSpec']:
-        doc['ToolGroupSpec']['Order'] = int(doc['ToolGroupSpec']['Order'])
+        doc.setdefault('BlockObjectToolGroupSpec', {}).update(doc['TimberApiToolGroupSpec'])
+      if 'Order' in doc['BlockObjectToolGroupSpec']:
+        doc['BlockObjectToolGroupSpec']['Order'] = int(doc['BlockObjectToolGroupSpec']['Order'])
+  # TODO: Read Fields/Forestry from ToolGroups blueprints
   toolgroups = [
-    ToolGroupBlueprint(ToolGroupSpec=ToolGroupSpec(
+    BlockObjectToolGroupBlueprint(BlockObjectToolGroupSpec=BlockObjectToolGroupSpec(
       Id='Fields',
-      Order=20,
+      Order=20 - 100,
       NameLocKey='ToolGroups.FieldsPlanting',
+      Icon='',
+      FallbackGroup=False,
       Type='PlantingModeToolGroup',
       Layout='Blue',
     )),
-    ToolGroupBlueprint(ToolGroupSpec=ToolGroupSpec(
+    BlockObjectToolGroupBlueprint(BlockObjectToolGroupSpec=BlockObjectToolGroupSpec(
       Id='Forestry',
-      Order=30,
+      Order=30 - 100,
       NameLocKey='ToolGroups.ForestryPlanting',
+      Icon='',
+      FallbackGroup=False,
       Type='PlantingModeToolGroup',
       Layout='Blue',
     )),
   ]
   for toolgroup in toolgroups:
-    toolgroup_specs = blueprints.setdefault(toolgroup['ToolGroupSpec']['Id'].lower(), [])
+    toolgroup_specs = blueprints.setdefault(toolgroup['BlockObjectToolGroupSpec']['Id'].lower(), [])
     if any(not i.optional for i in toolgroup_specs):
-      logging.warning(f'Duplicate {toolgroup['ToolGroupSpec']['Id']} ToolGroup')
+      logging.warning(f'Duplicate {toolgroup['BlockObjectToolGroupSpec']['Id']} ToolGroup')
       # continue
     assert not any(not i.optional for i in toolgroup_specs)
     toolgroup_specs.insert(0, PartialBlueprint(pathlib.Path('builtin'), False, toolgroup))
 
 
 def upgrade_tool_blueprints(
-    prefabs: dict[str, Prefab],
+    templates: dict[str, TemplateBlueprint],
     blueprints: dict[str, list[PartialBlueprint[ToolBlueprint]]]
 ):
   for tool_specs in blueprints.values():
@@ -450,11 +422,11 @@ def upgrade_tool_blueprints(
       if 'Order' in doc['ToolSpec']:
         doc['ToolSpec']['Order'] = int(doc['ToolSpec']['Order'])
   tools: list[ToolBlueprint] = []
-  for item in prefabs.values():
+  for item in templates.values():
     if 'PlaceableBlockObjectSpec' in item:
       spec = item['PlaceableBlockObjectSpec']
       tool = ToolBlueprint(ToolSpec=ToolSpec(
-        Id=item['Id'],  # item['Prefab']['PrefabName'],
+        Id=item['Id'],  # item['TemplateSpec']['TemplateName'],
         GroupId=spec['ToolGroupId'],
         Order=spec['ToolOrder'],
         NameLocKey=item['LabeledEntitySpec']['DisplayNameLocKey'],
@@ -465,7 +437,7 @@ def upgrade_tool_blueprints(
     if 'PlantableSpec' in item:
       spec = item['NaturalResourceSpec']
       tools.append(ToolBlueprint(ToolSpec=ToolSpec(
-        Id=item['Id'],  # item['Prefab']['PrefabName'],
+        Id=item['Id'],  # item['TemplateSpec']['TemplateName'],
         GroupId='Fields' if 'CropSpec' in item else 'Forestry',
         Order=spec['Order'],
         NameLocKey=item['LabeledEntitySpec']['DisplayNameLocKey'],
@@ -499,6 +471,7 @@ def merge_into_spec(
           assert x in i, f'{name}.{k}: {x}'
           i.remove(x)
       else:
+        # TODO: Support delete
         assert False, f'Unsupported mode: {name}.{k}#{m}: {v}'
     elif isinstance(i, dict):
       assert isinstance(v, dict), f'{name}.{k}: {v}'
@@ -518,29 +491,29 @@ def load_blueprints[T: Blueprint](
   for i, directory in enumerate(args.directories):
     # TODO This should iterate over all files and index by available Specs instead
     blueprint = cls.__name__.removesuffix('Blueprint')
-    pattern = f'../../Blueprints/**/{blueprint}.*' if i else f'Assets/Resources/blueprints/**/{blueprint}.*'
+    pattern = f'../../Blueprints/**/{blueprint}.*.blueprint.json' if i else f'Assets/StreamingAssets/Modding/Blueprints/**/{blueprint}.*.blueprint.json'
     logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
     paths = [p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta')]
-    if i and blueprint == 'ToolGroup':  # HACK Handle alternate filenames for TimberAPI
-      pattern = f'../../Blueprints/**/TimberApiToolGroup.*'
-      logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
-      paths.extend(p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta'))
-    if i:  # HACK Handle legacy filenames for Waterbeavers
-      pattern = f'../../Blueprints/**/{blueprint}Specification.*'
-      logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
-      paths.extend(p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta'))
+    # if i and blueprint == 'ToolGroup':  # HACK Handle alternate filenames for TimberAPI
+    #   pattern = f'../../Blueprints/**/TimberApiToolGroup.*.blueprint.json'
+    #   logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
+    #   paths.extend(p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta'))
+    # if i:  # HACK Handle legacy filenames for Waterbeavers
+    #   pattern = f'../../Blueprints/**/{blueprint}Specification.*.blueprint.json'
+    #   logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
+    #   paths.extend(p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta'))
     assert paths or i or upgrade_specs, pathlib.Path(directory).joinpath(pattern).resolve()
     all_paths.extend((i, path) for path in paths)
 
   all_specs: dict[str, list[PartialBlueprint[T]]] = {}
-  for i, p in track(f'Loading {cls.__name__.lower().replace('blueprint', ' blueprints')}', all_paths, total=len(all_paths)):
+  for i, p in track(f'Loading {cls.__name__.replace('Blueprint', ' blueprints')}', all_paths, total=len(all_paths)):
     logging.debug(f'Loading {p.resolve()}')
     blueprint_name, _, name = p.stem.lower().partition('.')
     # assert blueprint_name + 'blueprint' == cls.__name__.lower(), f'{blueprint_name}blueprint == {cls.__name__.lower()}'
     assert (
-      blueprint_name + 'blueprint' == cls.__name__.lower() or 
-      blueprint_name.replace('timberapi', '') + 'blueprint' == cls.__name__.lower() or 
-      blueprint_name.replace('specification', 'blueprint') == cls.__name__.lower()
+      blueprint_name + 'blueprint' == cls.__name__.lower()
+      # blueprint_name.replace('timberapi', '') + 'blueprint' == cls.__name__.lower() or
+      # blueprint_name.replace('specification', 'blueprint') == cls.__name__.lower() or
     ), f'{blueprint_name}blueprint == {cls.__name__.lower()}'  # HACK for Waterbeavers
     optional = name.endswith('.optional')
     name = name.replace('.optional', '')
@@ -568,125 +541,68 @@ def load_blueprints[T: Blueprint](
   return [s for s in merged_specs.values()]
 
 
-def resolve_properties[T](
-    val: dict[str, typing.Any],
-    game_object: int,
-    entries_by_id: dict[int, unityparser.constants.UnityClass],
-    metadata: dict[str, tuple[str, Metadata]],
-):
-  if isinstance(val, dict):
-    r = type(val)()
-    for k, v in val.items():
-      if k.startswith('m_'):
-        continue
-      elif k.startswith('_'):
-        if isinstance(v, dict):
-          if 'guid' in v:  # external reference
-            meta = metadata.get(v['guid'])
-            assert meta, v['guid']
-            del v['guid']
-            v['filename'] = meta[0]
-          elif 'fileID' in v and v['fileID'] != 0:  # local reference
-            if v['fileID'] not in entries_by_id:
-              logging.warning(f'Missing file {v['fileID']} for ref, skipping')
-              r[k[1].upper() + k[2:]] = v
-              continue
-            entry = entries_by_id[v['fileID']]
-            if entry.__class_name == 'GameObject' or entry.m_GameObject['fileID'] == game_object:  # type: ignore
-              del entries_by_id[v['fileID']]  # remove to prevent top-level references
-            v = type(v)(entry.get_serialized_properties_dict())
-        v = resolve_properties(v, game_object, entries_by_id, metadata)
-        r[k[1].upper() + k[2:]] = v
-      else:
-        r[k] = v
-    return r
-  elif isinstance(val, list):
-    return type(val)(resolve_properties(x, game_object, entries_by_id, metadata) for x in typing.cast(list, val))
-  return val
-
-
-def load_prefab(
+def load_template(
     manifests: dict[str, str],
-    metadata: dict[str, tuple[str, Metadata]],
     file_path: str,
 ):
   if file_path.lower() in manifests:
     directory = manifests[file_path.lower()]
   else:
     directory = manifests['']
-  pattern = f'{file_path}.prefab'
+  pattern = f'{file_path}.json'
 
   paths = list(pathlib.Path(directory).glob(pattern, case_sensitive=False))
   assert len(paths) == 1, f'len({pathlib.Path(directory)!r}.glob({pattern})) == {len(paths)}: {paths}'
   logging.debug(f'Loading {paths[0].relative_to(directory)}')
-  doc = unityparser.UnityDocument.load_yaml(paths[0], try_preserve_types=True)
-  entries_by_id: dict[int, unityparser.constants.UnityClass] = {int(e.anchor): e for e in doc.entries}
-  prefab: Prefab = typing.cast(Prefab, dict(Id=doc.entry.m_Name))
 
-  for component in doc.entry.m_Component:
-    entry = entries_by_id.pop(component['component']['fileID'], None)
-    if not entry:  # already consumed
-      continue
-    if entry.__class_name != 'MonoBehaviour':
-      continue
-    behaviour = typing.cast(MonoBehaviour, entry)
-    guid = behaviour.m_Script['guid']
-    meta = metadata.get(guid)
-    # assert meta, f'Missing script {guid} for behaviour in {prefab['Id']}'  # Whitepaws
-    if not meta:
-      logging.warning(f'Missing script {guid} for behaviour in {prefab['Id']}, skipping')
-      meta = [f'unresolved:{guid}']
-      # continue
-    properties = behaviour.get_serialized_properties_dict()
-    resolved_properties = resolve_properties(properties, int(doc.entry.anchor), entries_by_id, metadata)
-    prefab[pathlib.Path(meta[0]).stem] = resolved_properties
-
-  return prefab
+  with open(paths[0], 'rt') as f:
+    template: TemplateBlueprint = typing.cast(TemplateBlueprint, json5.load(f))
+    template['Id'] = paths[0].stem.replace('.blueprint', '')
+  return template
 
 
-def load_prefabs_and_tools(
+def load_templates_and_tools(
     args: argparse.Namespace,
     manifests: dict[str, str],
-    metadata: dict[str, tuple[str, Metadata]],
     factions: dict[str, FactionBlueprint],
-) -> tuple[dict[str, dict[str, Prefab]], dict[str, list[ToolBlueprint]]]:
+) -> tuple[dict[str, dict[str, TemplateBlueprint]], dict[str, list[ToolBlueprint]]]:
   map = builtins.map if args.debug else concurrent.futures.ProcessPoolExecutor().map
-  prefabs: dict[str, dict[str, Prefab]] = {'common': {}}
+  templates: dict[str, dict[str, TemplateBlueprint]] = {'common': {}}
   tools: dict[str, list[ToolBlueprint]] = {}
 
-  prefabgroups = load_blueprints(args, PrefabGroupBlueprint)
+  template_collections = load_blueprints(args, TemplateCollectionBlueprint)
   commonpaths = list(itertools.chain.from_iterable(
-    typing.cast(list, b['PrefabGroupSpec']['Paths']) for b in prefabgroups if b['PrefabGroupSpec']['Id'].lower() == 'common'))
+    typing.cast(list, b['TemplateCollectionSpec']['Blueprints']) for b in template_collections if b['TemplateCollectionSpec']['CollectionId'].lower() == 'common'))
 
-  for prefab in track(f'Loading common prefabs', map(load_prefab, *zip(*((manifests, metadata, prefab) for prefab in commonpaths))), total=len(commonpaths)):
-    assert prefab and prefab['Id'].lower() not in prefabs['common']
-    prefabs['common'][prefab['Id'].lower()] = prefab
-  tools['common'] = load_blueprints(args, ToolBlueprint, functools.partial(upgrade_tool_blueprints, prefabs['common']))
+  for template in track(f'Loading common templates', map(load_template, *zip(*((manifests, template) for template in commonpaths))), total=len(commonpaths)):
+    assert template and template['Id'].lower() not in templates['common']
+    templates['common'][template['Id'].lower()] = template
+  tools['common'] = load_blueprints(args, ToolBlueprint, functools.partial(upgrade_tool_blueprints, templates['common']))
 
   for key, faction in factions.items():
     if faction['FactionSpec']['NewGameFullAvatar'].endswith('NO'):
       logging.warning(f'Skipping {faction['FactionSpec']['Id']} because avatar ends with NO')
       continue
 
-    faction_groups = tuple(g.lower() for g in faction['FactionSpec']['PrefabGroups'])
-    faction_prefabs = list(itertools.chain.from_iterable(
-      typing.cast(list, b['PrefabGroupSpec']['Paths']) for b in prefabgroups if b['PrefabGroupSpec']['Id'].lower() in faction_groups))
-    prefabs[key] = {}
-    for prefab in track(f'Loading {faction['FactionSpec']['Id']} prefabs', map(load_prefab, *zip(*((manifests, metadata, prefab) for prefab in faction_prefabs))), total=len(faction_prefabs)):
-      assert prefab
-      assert prefab['Id'].lower() not in prefabs[key], prefab['Id']
-      if prefab['Id'].lower() in prefabs[key]:
+    faction_collections = tuple(g.lower() for g in faction['FactionSpec']['TemplateCollectionIds'])
+    faction_templates = list(itertools.chain.from_iterable(
+      typing.cast(list, b['TemplateCollectionSpec']['Blueprints']) for b in template_collections if b['TemplateCollectionSpec']['CollectionId'].lower() in faction_collections))
+    templates[key] = {}
+    for template in track(f'Loading {faction['FactionSpec']['Id']} templates', map(load_template, *zip(*((manifests, template) for template in faction_templates))), total=len(faction_templates)):
+      assert template
+      assert template['Id'].lower() not in templates[key], template['Id']
+      if template['Id'].lower() in templates[key]:
         breakpoint()
-      prefabs[key][prefab['Id'].lower()] = prefab
-    tools[key] = load_blueprints(args, ToolBlueprint, functools.partial(upgrade_tool_blueprints, prefabs[key]))
-  return prefabs, tools
+      templates[key][template['Id'].lower()] = template
+    tools[key] = load_blueprints(args, ToolBlueprint, functools.partial(upgrade_tool_blueprints, templates[key]))
+  return templates, tools
 
 
 def load_translations(args: argparse.Namespace, language: str):
   csv.register_dialect('timberborn', skipinitialspace=True, strict=True)
   catalog: dict[str, str] = {}
   for i, directory in enumerate(args.directories):
-    pattern_dir = f'../../Localizations/' if i else f'Assets/Resources/localizations/'
+    pattern_dir = f'../../Localizations/' if i else f'Assets/StreamingAssets/Modding/Localizations/'
     patterns = [f'{pattern_dir}{language}{suffix}' for suffix in ['*.txt', '*.csv']]
     paths = []
     for pattern in patterns:
@@ -719,6 +635,9 @@ def load_translations(args: argparse.Namespace, language: str):
   catalog['Pictogram.Cuttable'] = '🪚'
   catalog['Pictogram.Gatherable'] = '🧺'
   catalog['Pictogram.Ruin'] = '⛓️'
+
+  catalog['Time.DaysShort'] = catalog['Time.DaysShort'].format('{:g}')
+  catalog['Time.HoursShort'] = catalog['Time.HoursShort'].format('{:g}')
 
   def gettext(message: str):
     if message in catalog:
@@ -821,9 +740,9 @@ class Generator:
       needgroups: dict[str, NeedGroupBlueprint],
       needs: dict[str, NeedBlueprint],
       recipes: dict[str, RecipeBlueprint],
-      toolgroups: dict[str, ToolGroupBlueprint],
+      toolgroups: dict[str, BlockObjectToolGroupBlueprint],
       tools: dict[str, ToolBlueprint],
-      prefabs: dict[str, Prefab],
+      templates: dict[str, TemplateBlueprint],
   ):
     self.args = args
     self.index = index
@@ -836,29 +755,29 @@ class Generator:
     self.toolgroups = toolgroups
     self.toolgroups_by_group = dict_group_by_id(toolgroups.values(), 'ToolGroupSpec.GroupId')
     self.tools_by_group = dict_group_by_id(tools.values(), 'ToolSpec.GroupId')
-    self.prefabs = {prefab['Id'].lower(): prefab for prefab in prefabs.values() if 'PrefabSpec' in prefab}
-    self.natural_resources: list[Prefab] = sorted(
-      [p for p in prefabs.values() if 'NaturalResourceSpec' in p],
+    self.templates = {template['Id'].lower(): template for template in templates.values() if 'TemplateSpec' in template}
+    self.natural_resources: list[TemplateBlueprint] = sorted(
+      [p for p in templates.values() if 'NaturalResourceSpec' in p],
       key=lambda p: ('CropSpec' not in p, p['NaturalResourceSpec']['Order'])
     )
-    self.plantable_by_group = dict_group_by_id(prefabs.values(), 'PlantableSpec.ResourceGroup')
-    self.planter_building_by_group = dict_group_by_id(prefabs.values(), 'PlanterBuildingSpec.PlantableResourceGroup')
-    cuttable_by_group = dict_group_by_id(prefabs.values(), 'CuttableSpec.YielderSpec.ResourceGroup')
-    gatherable_by_group = dict_group_by_id(prefabs.values(), 'GatherableSpec.YielderSpec.ResourceGroup')
-    scavengable_by_group = dict_group_by_id(prefabs.values(), 'RuinSpec.YielderSpec.ResourceGroup')
+    self.plantable_by_group = dict_group_by_id(templates.values(), 'PlantableSpec.ResourceGroup')
+    self.planter_building_by_group = dict_group_by_id(templates.values(), 'PlanterBuildingSpec.PlantableResourceGroup')
+    cuttable_by_group = dict_group_by_id(templates.values(), 'CuttableSpec.YielderSpec.ResourceGroup')
+    gatherable_by_group = dict_group_by_id(templates.values(), 'GatherableSpec.YielderSpec.ResourceGroup')
+    scavengable_by_group = dict_group_by_id(templates.values(), 'RuinSpec.YielderSpec.ResourceGroup')
     self.yieldable_by_group: dict[
       str,
-      tuple[typing.Literal['CuttableSpec'], list[Prefab]] |
-      tuple[typing.Literal['GatherableSpec'], list[Prefab]] |
-      tuple[typing.Literal['RuinSpec'], list[Prefab]]
+      tuple[typing.Literal['CuttableSpec'], list[TemplateBlueprint]] |
+      tuple[typing.Literal['GatherableSpec'], list[TemplateBlueprint]] |
+      tuple[typing.Literal['RuinSpec'], list[TemplateBlueprint]]
     ] = {}
     self.yieldable_by_group.update({k: ('CuttableSpec', v) for k, v in cuttable_by_group.items()})
     self.yieldable_by_group.update({k: ('GatherableSpec', v) for k, v in gatherable_by_group.items()})
     self.yieldable_by_group.update({k: ('RuinSpec', v) for k, v in scavengable_by_group.items()})
 
   def IsPlantableResourceGroupVisible(self, group: str) -> bool:
-    def IsToolGroupHidden(prefab: Prefab) -> bool:
-      name = prefab['PlaceableBlockObjectSpec']['ToolGroupId']
+    def IsToolGroupHidden(template: TemplateBlueprint) -> bool:
+      name = template['PlaceableBlockObjectSpec']['ToolGroupId']
       tg = self.toolgroups.get(name.lower())
       if not tg:
         return True
@@ -868,30 +787,30 @@ class Generator:
   def RenderFaction(self, faction: FactionBlueprint):
     self.RenderNaturalResources(self.natural_resources)
     for b in self.toolgroups_by_group['']:
-      if b['ToolGroupSpec'].get('Type') != 'PlantingModeToolGroup':
+      if b['BlockObjectToolGroupSpec'].get('Type') != 'PlantingModeToolGroup':
         self.RenderToolGroup(b)
 
-  def RenderNaturalResources(self, resources: list[Prefab]):
+  def RenderNaturalResources(self, resources: list[TemplateBlueprint]):
     for b in self.toolgroups_by_group['']:
-      if b['ToolGroupSpec'].get('Type') == 'PlantingModeToolGroup':
+      if b['BlockObjectToolGroupSpec'].get('Type') == 'PlantingModeToolGroup':
         self.RenderToolGroup(b)
 
-  def RenderToolGroup(self, toolgroup: ToolGroupBlueprint):
-    if toolgroup['ToolGroupSpec'].get('DevMode'):
-      logging.debug(f'Skipping DevMode ToolGroup {toolgroup['ToolGroupSpec']['Id']}')
+  def RenderToolGroup(self, toolgroup: BlockObjectToolGroupBlueprint):
+    if toolgroup['BlockObjectToolGroupSpec'].get('DevMode'):
+      logging.debug(f'Skipping DevMode ToolGroup {toolgroup['BlockObjectToolGroupSpec']['Id']}')
       return
-    if toolgroup['ToolGroupSpec'].get('Hidden'):
-      logging.debug(f'Skipping Hidden ToolGroup {toolgroup['ToolGroupSpec']['Id']}')
+    if toolgroup['BlockObjectToolGroupSpec'].get('Hidden'):
+      logging.debug(f'Skipping Hidden ToolGroup {toolgroup['BlockObjectToolGroupSpec']['Id']}')
       return
-    items: list[tuple[int, typing.Literal[True], ToolGroupBlueprint] | tuple[int, typing.Literal[False], ToolBlueprint]] = []
-    for tool in self.tools_by_group.get(toolgroup['ToolGroupSpec']['Id'].lower(), []):
+    items: list[tuple[int, typing.Literal[True], BlockObjectToolGroupBlueprint] | tuple[int, typing.Literal[False], ToolBlueprint]] = []
+    for tool in self.tools_by_group.get(toolgroup['BlockObjectToolGroupSpec']['Id'].lower(), []):
       items.append((tool['ToolSpec']['Order'], False, tool))
-    for tg in self.toolgroups_by_group.get(toolgroup['ToolGroupSpec']['Id'].lower(), []):
-      items.append((tg['ToolGroupSpec']['Order'], True, tg))
+    for tg in self.toolgroups_by_group.get(toolgroup['BlockObjectToolGroupSpec']['Id'].lower(), []):
+      items.append((tg['BlockObjectToolGroupSpec']['Order'], True, tg))
 
     for _, is_group, item in sorted(items, key=lambda x: (x[0], x[1])):
       if is_group:
-        toolgroup = typing.cast(ToolGroupBlueprint, item)
+        toolgroup = typing.cast(BlockObjectToolGroupBlueprint, item)
         self.RenderToolGroup(toolgroup)
       else:
         tool = typing.cast(ToolBlueprint, item)
@@ -901,20 +820,20 @@ class Generator:
         if tool['ToolSpec'].get('Hidden'):
           logging.debug(f'Skipping Hidden Tool {tool['ToolSpec']['Id']}')
           continue
-        prefab = self.prefabs[tool['ToolSpec']['Id'].lower()]
-        if 'PlantableSpec' in prefab:
-          self.RenderNaturalResource(prefab)
-        if 'PlaceableBlockObjectSpec' in prefab:
-          self.RenderBuilding(prefab)
+        template = self.templates[tool['ToolSpec']['Id'].lower()]
+        if 'PlantableSpec' in template:
+          self.RenderNaturalResource(template)
+        if 'PlaceableBlockObjectSpec' in template:
+          self.RenderBuilding(template)
 
-  def RenderBuilding(self, building: Prefab):
+  def RenderBuilding(self, building: TemplateBlueprint):
     for r in building.get('ManufactorySpec', {}).get('ProductionRecipeIds', []):
       if r.lower() not in self.recipes:
         logging.warning(f'Skipping missing recipe: {r}')
         continue
       self.RenderRecipe(self.recipes[r.lower()])
 
-  def RenderNaturalResource(self, resource: Prefab): ...
+  def RenderNaturalResource(self, resource: TemplateBlueprint): ...
   def RenderRecipe(self, recipe: RecipeBlueprint): ...
   def Write(self, filename): ...
 
@@ -930,7 +849,7 @@ class GraphGenerator(Generator):
       message = f'<{message}>'
     return message
 
-  def RenderFaction(self, faction: FactionBlueprint, prefabs: typing.Collection[Prefab], toolgroups: dict[str, ToolGroupBlueprint] ):
+  def RenderFaction(self, faction: FactionBlueprint, templates: typing.Collection[TemplateBlueprint], toolgroups: dict[str, BlockObjectToolGroupBlueprint] ):
     _ = self.dottext
 
     self.graph.set_name(faction['FactionSpec']['Id'])
@@ -941,23 +860,23 @@ class GraphGenerator(Generator):
       # image='sprites/bottombar/buildinggroups/Science.png',
     ))
 
-    for building in prefabs:
+    for building in templates:
       if building.get('PlaceableBlockObjectSpec', {}).get('ToolGroupId', '').lower() not in toolgroups:
         continue
       toolgroup = toolgroups[building['PlaceableBlockObjectSpec']['ToolGroupId'].lower()]
-      if toolgroup['ToolGroupSpec'].get('Hidden'):
+      if toolgroup['BlockObjectToolGroupSpec'].get('Hidden'):
         continue
 
       building_goods = set()
       for c in building.get('BuildingSpec', {}).get('BuildingCost', []):
-        building_goods.add(c['GoodId'].lower())
+        building_goods.add(c['Id'].lower())
 
       recipes = building.get('ManufactorySpec', {}).get('ProductionRecipeIds', [])
       for r in recipes:
         sg = pydot.Subgraph(
           building['Id'] + ('.' + r if len(recipes) > self.args.graph_grouping_threshold else ''),
           cluster=True,
-          label=f'[{_(toolgroup['ToolGroupSpec']['NameLocKey'])}]\n{_(building['LabeledEntitySpec']['DisplayNameLocKey'])}',
+          label=f'[{_(toolgroup['BlockObjectToolGroupSpec']['NameLocKey'])}]\n{_(building['LabeledEntitySpec']['DisplayNameLocKey'])}',
           fontsize=self.FONTSIZE,
         )
         self.graph.add_subgraph(sg)
@@ -1071,7 +990,7 @@ class GraphGenerator(Generator):
       fontcolor='white',
     )
 
-    self.RenderFaction(self.faction, self.prefabs.values(), self.toolgroups)
+    self.RenderFaction(self.faction, self.templates.values(), self.toolgroups)
 
     self.graph.write(f'{filename}.dot', format='raw', encoding='utf-8')
     self.graph.write(f'{filename}.svg', format='svg', encoding='utf-8')
@@ -1173,7 +1092,7 @@ class HtmlGenerator(Generator):
       # with tag('object', width='1440', data=str(filename.relative_to(filename.parent).with_suffix('.svg'))):
       #   pass
 
-  def RenderNaturalResources(self, resources: list[Prefab]):
+  def RenderNaturalResources(self, resources: list[TemplateBlueprint]):
     _ = self.gettext
     line = self.doc.line
     with self.tag('div', klass='toolgroup card'):
@@ -1188,7 +1107,7 @@ class HtmlGenerator(Generator):
           line('th', _(f'Pictogram.Matures'))
         super().RenderNaturalResources(resources)
 
-  def RenderNaturalResource(self, r: Prefab):
+  def RenderNaturalResource(self, r: TemplateBlueprint):
     _ = self.gettext
     line = self.doc.line
     plantable = r.get('PlantableSpec')
@@ -1197,7 +1116,7 @@ class HtmlGenerator(Generator):
     searchable = [r['Id'].lower()]
     for yield_type in ('CuttableSpec', 'GatherableSpec', 'RuinSpec'):
       if yield_type in r:
-        item = r[yield_type]['YielderSpec']['Yield']['GoodId'].lower()
+        item = r[yield_type]['YielderSpec']['Yield']['Id'].lower()
         if item != 'log' and item not in searchable:
           searchable.append(item)
     with self.tag('tr', ('data-searchable', ' '.join(searchable)), ('data-category', 'producer'), klass='naturalresource'):
@@ -1213,17 +1132,17 @@ class HtmlGenerator(Generator):
 
       super().RenderNaturalResource(r)
 
-  def RenderToolGroup(self, toolgroup: ToolGroupBlueprint):
+  def RenderToolGroup(self, toolgroup: BlockObjectToolGroupBlueprint):
     _ = self.gettext
     line = self.doc.line
-    if toolgroup['ToolGroupSpec'].get('Type') == 'PlantingModeToolGroup':
+    if toolgroup['BlockObjectToolGroupSpec'].get('Type') == 'PlantingModeToolGroup':
       super().RenderToolGroup(toolgroup)
       return
     with self.tag('div', klass='toolgroup card') as header:
-      header.line('div', _(toolgroup['ToolGroupSpec']['NameLocKey']), klass='name')
+      header.line('div', _(toolgroup['BlockObjectToolGroupSpec']['NameLocKey']), klass='name')
       super().RenderToolGroup(toolgroup)
 
-  def RenderBuilding(self, building: Prefab):
+  def RenderBuilding(self, building: TemplateBlueprint):
     _ = self.gettext
     line = self.doc.line
     with self.tag('div', klass='building card') as header:
@@ -1245,18 +1164,19 @@ class HtmlGenerator(Generator):
       with self.tag('div', klass='content'):
         with self.tag('ul', klass='cost'):
           for x in building['BuildingSpec']['BuildingCost']:
-            good = self.goods[x['GoodId'].lower()]
+            good = self.goods[x['Id'].lower()]
             amount = x['Amount']
             lockey = 'DisplayNameLocKey' if amount == 1 else 'PluralDisplayNameLocKey'
             label = _(good['GoodSpec'][lockey])
             line('li', f'{amount} {label}', ('data-searchable', good['GoodSpec']['Id'].lower()), ('data-category', 'consumer'))
 
           if 'GoodConsumingBuildingSpec' in building:
-            good = self.goods[building['GoodConsumingBuildingSpec']['Supply'].lower()]
-            amount = building['GoodConsumingBuildingSpec']['GoodPerHour']
-            lockey = 'DisplayNameLocKey' if amount == 1 else 'PluralDisplayNameLocKey'
-            label = _(good['GoodSpec'][lockey])
-            line('li', f'{amount} {label} per hour', ('data-searchable', good['GoodSpec']['Id'].lower()), ('data-category', 'consumer'))
+            for x in building['GoodConsumingBuildingSpec']['ConsumedGoods']:
+              good = self.goods[x['GoodId'].lower()]
+              amount = x['GoodPerHour']
+              lockey = 'DisplayNameLocKey' if amount == 1 else 'PluralDisplayNameLocKey'
+              label = _(good['GoodSpec'][lockey])
+              line('li', f'{amount} {label} per hour', ('data-searchable', good['GoodSpec']['Id'].lower()), ('data-category', 'consumer'))
 
         radius = (
           building.get('RangedEffectBuildingSpec', {}).get('EffectRadius') or
@@ -1276,15 +1196,13 @@ class HtmlGenerator(Generator):
             line('li', label, ('data-searchable', need['NeedSpec']['Id'].lower()), ('data-category', 'consumer' if float(points) < 0 else 'producer'), klass='bad' if float(points) < 0 else 'good')
 
         with self.tag('ul', klass='needs'):
-          area_need = building.get('AreaNeedApplierSpec')
-          if area_need:
-            RenderEffects([area_need['EffectPerHour']])
+          RenderEffects(building.get('AreaNeedApplierSpec', {'Effects':[]})['Effects'])
           RenderEffects(building.get('DwellingSpec', {'SleepEffects':[]})['SleepEffects'])
           RenderEffects(building.get('WorkshopRandomNeedApplierSpec', {'Effects':[]})['Effects'])
           RenderEffects(building.get('AttractionSpec', {'Effects':[]})['Effects'])
           RenderEffects(building.get('ContinuousEffectBuildingSpec', {'Effects':[]})['Effects'])
 
-        resources: dict[str, Prefab] = {}
+        resources: dict[str, TemplateBlueprint] = {}
         with self.tag('table') as header:
           with header.tag('tr'):
             line('th', '', klass='name')
@@ -1309,14 +1227,14 @@ class HtmlGenerator(Generator):
               yield_type, yields = None, None
 
           for r in sorted(resources.items(), key=lambda r: r[1].get('NaturalResourceSpec', {}).get('Order', 0)):
-            plant: Prefab = r[1]
+            plant: TemplateBlueprint = r[1]
             searchable = [plant['Id'].lower()]
             categories = []
             if plants and plant in plants:
               categories.append('producer')
             for yt in ('CuttableSpec', 'GatherableSpec', 'RuinSpec'):
               if yt in plant:
-                item = plant[yt]['YielderSpec']['Yield']['GoodId'].lower()
+                item = plant[yt]['YielderSpec']['Yield']['Id'].lower()
                 if item != 'log' and item not in searchable:
                   searchable.append(item)
             if yields and plant in yields:
@@ -1418,12 +1336,12 @@ class TextGenerator(Generator):
     ])
     super().RenderFaction(faction)
 
-  def RenderNaturalResources(self, resources: list[Prefab]):
+  def RenderNaturalResources(self, resources: list[TemplateBlueprint]):
     _ = self.gettext
     with self.NewContext(f'{self.prefix}{_('MapEditor.Layers.NaturalResources')}:') as c:
       super().RenderNaturalResources(resources)
 
-  def RenderNaturalResource(self, r: Prefab):
+  def RenderNaturalResource(self, r: TemplateBlueprint):
     _ = self.gettext
     plantable = r.get('PlantableSpec')
     if not self.IsPlantableResourceGroupVisible(plantable['ResourceGroup']):
@@ -1444,15 +1362,15 @@ class TextGenerator(Generator):
     with self.NewContext(heading, forced=True) as c:
       super().RenderNaturalResource(r)
 
-  def RenderToolGroup(self, toolgroup: ToolGroupBlueprint):
+  def RenderToolGroup(self, toolgroup: BlockObjectToolGroupBlueprint):
     _ = self.gettext
-    if toolgroup['ToolGroupSpec'].get('Type') == 'PlantingModeToolGroup':
+    if toolgroup['BlockObjectToolGroupSpec'].get('Type') == 'PlantingModeToolGroup':
       super().RenderToolGroup(toolgroup)
       return
-    with self.NewContext(f'{self.prefix}{_(toolgroup['ToolGroupSpec']['NameLocKey'])}:') as c:
+    with self.NewContext(f'{self.prefix}{_(toolgroup['BlockObjectToolGroupSpec']['NameLocKey'])}:') as c:
       super().RenderToolGroup(toolgroup)
 
-  def RenderBuilding(self, building: Prefab):
+  def RenderBuilding(self, building: TemplateBlueprint):
     _ = self.gettext
     text = _(building['LabeledEntitySpec']['DisplayNameLocKey']).replace('\n', ' ')
     stats = []
@@ -1472,17 +1390,18 @@ class TextGenerator(Generator):
     heading = f'{self.prefix}{text}:'
     with self.NewContext(heading) as c:
       for cost in building['BuildingSpec']['BuildingCost']:
-        good = self.goods[cost['GoodId'].lower()]
+        good = self.goods[cost['Id'].lower()]
         lockey = 'DisplayNameLocKey' if cost['Amount'] == 1 else 'PluralDisplayNameLocKey'
         label = _(good['GoodSpec'][lockey])
         c.append(f'{self.prefix}▶ {cost['Amount']} {label}')
 
       if 'GoodConsumingBuildingSpec' in building:
-        good = self.goods[building['GoodConsumingBuildingSpec']['Supply'].lower()]
-        amount = building['GoodConsumingBuildingSpec']['GoodPerHour']
-        lockey = 'DisplayNameLocKey' if amount == 1 else 'PluralDisplayNameLocKey'
-        label = _(good['GoodSpec'][lockey])
-        c.append(f'{self.prefix}▶ {amount} {label} per hour')
+        for x in building['GoodConsumingBuildingSpec']['ConsumedGoods']:
+          good = self.goods[x['GoodId'].lower()]
+          amount = x['GoodPerHour']
+          lockey = 'DisplayNameLocKey' if amount == 1 else 'PluralDisplayNameLocKey'
+          label = _(good['GoodSpec'][lockey])
+          c.append(f'{self.prefix}▶ {amount} {label} per hour')
 
       radius = (
         building.get('RangedEffectBuildingSpec', {}).get('EffectRadius') or
@@ -1503,13 +1422,13 @@ class TextGenerator(Generator):
 
       area_need = building.get('AreaNeedApplierSpec')
       if area_need:
-        RenderEffects([area_need['EffectPerHour']])
+        RenderEffects(area_need['Effects'])
       RenderEffects(building.get('DwellingSpec', {'SleepEffects':[]})['SleepEffects'])
       RenderEffects(building.get('WorkshopRandomNeedApplierSpec', {'Effects':[]})['Effects'])
       RenderEffects(building.get('AttractionSpec', {'Effects':[]})['Effects'])
       RenderEffects(building.get('ContinuousEffectBuildingSpec', {'Effects':[]})['Effects'])
 
-      resources: dict[str, Prefab] = {}
+      resources: dict[str, TemplateBlueprint] = {}
       plantable = building.get('PlanterBuildingSpec')
       if plantable:
         plants = self.plantable_by_group[plantable['PlantableResourceGroup'].lower()]
@@ -1529,7 +1448,7 @@ class TextGenerator(Generator):
         yield_type, yields = None, None
 
       for r in sorted(resources.items(), key=lambda r: r[1].get('NaturalResourceSpec', {}).get('Order', 0)):
-        plant: Prefab = r[1]
+        plant: TemplateBlueprint = r[1]
         text = _(plant['LabeledEntitySpec']['DisplayNameLocKey'])
         stats = []
         if plants:
@@ -1618,9 +1537,13 @@ def main():
   args.directories = expand_directories(args.directories)
 
   languages = []
-  for directory in args.directories:
-    pattern = f'Assets/Resources/localizations/*.txt'
-    for p in list(pathlib.Path(directory).glob(pattern, case_sensitive=False)):
+  for i, directory in enumerate(args.directories):
+    pattern_dir = f'../../Localizations/' if i else f'Assets/StreamingAssets/Modding/Localizations/'
+    patterns = [f'{pattern_dir}{suffix}' for suffix in ['*.txt', '*.csv']]
+    paths = []
+    for pattern in patterns:
+      paths.extend(pathlib.Path(directory).glob(pattern, case_sensitive=False))
+    for p in paths:
       if p.match('*_*') or p.match('reference*'):
         continue
       language = p.relative_to(directory).stem
@@ -1669,10 +1592,10 @@ def main():
         needgroups: dict[str, NeedGroupBlueprint] = d['needgroups']
         needs: dict[str, NeedBlueprint] = d['needs']
         recipes: dict[str, RecipeBlueprint] = d['recipes']
-        toolgroups: dict[str, ToolGroupBlueprint] = d['toolgroups']
+        toolgroups: dict[str, BlockObjectToolGroupBlueprint] = d['toolgroups']
         tools: dict[str, dict[str, ToolBlueprint]] = d['tools']
-        prefabs: dict[str, dict[str, Prefab]] = d['prefabs']
-        if factions and goods and needs and needgroups and recipes and toolgroups and tools and prefabs:
+        templates: dict[str, dict[str, TemplateBlueprint]] = d['templates']
+        if factions and goods and needs and needgroups and recipes and toolgroups and tools and templates:
           cached = True
   except:
     logging.warning(f'Missing/corrupt: {cache_file}')
@@ -1683,19 +1606,18 @@ def main():
     needgroups = {b['NeedGroupSpec']['Id'].lower(): b for b in load_blueprints(args, NeedGroupBlueprint)}
     needs = {b['NeedSpec']['Id'].lower(): b for b in load_blueprints(args, NeedBlueprint)}
     recipes = {b['RecipeSpec']['Id'].lower(): b for b in load_blueprints(args, RecipeBlueprint)}
-    toolgroups_by_id = {b['ToolGroupSpec']['Id'].lower(): b for b in load_blueprints(args, ToolGroupBlueprint, upgrade_toolgroup_blueprints)}
-    def ToolGroupKey(b: ToolGroupBlueprint | None):
+    toolgroups_by_id = {b['BlockObjectToolGroupSpec']['Id'].lower(): b for b in load_blueprints(args, BlockObjectToolGroupBlueprint, upgrade_toolgroup_blueprints)}
+    def ToolGroupKey(b: BlockObjectToolGroupBlueprint | None):
       if not b:
         return ()
-      k = (b['ToolGroupSpec'].get('Layout', 'Default'), b['ToolGroupSpec']['Order'])
-      groupId = b['ToolGroupSpec'].get('GroupId')
+      k = (b['BlockObjectToolGroupSpec'].get('Layout', 'Default'), b['BlockObjectToolGroupSpec']['Order'])
+      groupId = b['BlockObjectToolGroupSpec'].get('GroupId')
       if groupId:
         k = ToolGroupKey(toolgroups_by_id[groupId.lower()]) + k
       return k
-    toolgroups = {tg['ToolGroupSpec']['Id'].lower(): tg for tg in sorted(toolgroups_by_id.values(), key=lambda kg: ToolGroupKey(kg))}
+    toolgroups = {tg['BlockObjectToolGroupSpec']['Id'].lower(): tg for tg in sorted(toolgroups_by_id.values(), key=lambda kg: ToolGroupKey(kg))}
     manifests = load_manifests(prefixes)
-    metadata = load_metadata(args)
-    prefabs, tool_lists = load_prefabs_and_tools(args, manifests, metadata, factions)
+    templates, tool_lists = load_templates_and_tools(args, manifests, factions)
     tools: dict[str, dict[str, ToolBlueprint]] = {}
     for key in tool_lists:
       tools[key] = {b['ToolSpec']['Id'].lower(): b for b in sorted(tool_lists[key], key=lambda t: (ToolGroupKey(toolgroups.get(t['ToolSpec']['GroupId'].lower())), t['ToolSpec']['Order']))}
@@ -1708,7 +1630,7 @@ def main():
       recipes=recipes,
       toolgroups=toolgroups,
       tools=tools,
-      prefabs=prefabs,
+      templates=templates,
     )
     with open(cache_file + '.json', 'wt', encoding='utf-8') as f:
       json5.dump(d, f, indent=2, quote_keys=True, trailing_commas=False)
@@ -1730,9 +1652,9 @@ def main():
         continue
       logging.info(f'Generating {faction['FactionSpec']['Id']} in {_('Settings.Language.Name')}: {_(faction['FactionSpec']['DisplayNameLocKey'])}')
       faction_tools = tools['common'] | tools[faction['FactionSpec']['Id'].lower()]
-      faction_prefabs = prefabs['common'] | prefabs[faction['FactionSpec']['Id'].lower()]
+      faction_templates = templates['common'] | templates[faction['FactionSpec']['Id'].lower()]
       for cls in generators:
-        gen = cls(args, index, _, faction, goods, needgroups, needs, recipes, toolgroups, faction_tools, faction_prefabs)
+        gen = cls(args, index, _, faction, goods, needgroups, needs, recipes, toolgroups, faction_tools, faction_templates)
         gen.Write(f'{args.output}/{language}_{faction['FactionSpec']['Id']}')
   logging.info('Generating index')
   index.Write(f'{args.output}/index.html', list(versions.values()))

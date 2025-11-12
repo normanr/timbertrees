@@ -6,12 +6,12 @@ authors = [{name = "Norman Rasmussen", email = "norman@rasmussen.co.za>"}]
 readme = "README.md"
 requires-python = ">= 3.12"
 dependencies = [
-    "unityparser (>=4)",
     "pydot",
     "json5 (>=0.9.26)",
     "yattag",
     "rich",
     "braceexpand",
+    "pyyaml (>=6.0.3,<7.0.0)",
 ]
 
 [build-system]
