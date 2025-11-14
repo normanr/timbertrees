@@ -22,6 +22,7 @@ import rich.progress
 import typing
 import yattag
 import yaml
+import zipfile
 
 
 # More can be found at https://timberapi.com/specifications/schemas/
@@ -299,7 +300,7 @@ class TemplateBlueprint(typing.TypedDict):
 
 
 class PartialBlueprint[T: Blueprint](typing.NamedTuple):
-    path: pathlib.Path
+    path: pathlib.Path | zipfile.Path
     optional: bool
     specification: T
 
@@ -316,11 +317,11 @@ def load_versions(args: argparse.Namespace) -> tuple[list[dict[str, typing.Any]]
   versions: list[dict[str, typing.Any]] = []
   prefixes: dict[str, str] = {}
   for i, directory in enumerate(track('Loading versions', args.directories, transient=True)):
-    pattern = '../../manifest.json' if i else 'Assets/StreamingAssets/VersionNumbers.json'
-    logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
+    pattern = 'manifest.json' if i else 'StreamingAssets/VersionNumbers.json'
+    logging.debug(f'Reading {pathlib.Path(directory).joinpath(pattern).resolve()}:')
     paths = [p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False)]
     assert len(paths) == 1, f'len({pathlib.Path(directory)!r}.glob({pattern})) == {len(paths)}: {paths}'
-    with open(paths[0], 'rt', encoding='utf-8-sig') as f:
+    with paths[0].open('r', encoding='utf-8-sig') as f:
       try:
         doc = typing.cast(dict, json5.load(f, strict=False))
       except Exception as e:
@@ -343,9 +344,9 @@ def load_manifests(prefixes: dict[str, str]) -> dict[str, str]:
   for i, prefix in enumerate(track('Loading asset manifests', prefixes)):
     directory = prefixes[prefix]
     if not i:
-      manifests[''] = str(pathlib.Path(directory).joinpath('Assets/StreamingAssets/Modding/Blueprints'))
+      manifests[''] = str(pathlib.Path(directory).joinpath('StreamingAssets/Modding/Blueprints.zip'))
       continue
-    pattern = '../../AssetBundles/*.manifest'
+    pattern = 'AssetBundles/*.manifest'
     logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
     paths = [p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False)]
     if not len(paths):
@@ -353,7 +354,7 @@ def load_manifests(prefixes: dict[str, str]) -> dict[str, str]:
     # assert len(paths) > 0, f'len(glob({pattern})) == {len(paths)}: {paths}'
     assets: dict[str, str] = {}
     for p in paths:
-      with open(p, 'rt', encoding='utf-8-sig') as f:
+      with open(p, 'r', encoding='utf-8-sig') as f:
         doc = yaml.load(f, yaml.SafeLoader)
         if 'Assets' in doc:
           for asset in doc['Assets']:
@@ -365,7 +366,7 @@ def load_manifests(prefixes: dict[str, str]) -> dict[str, str]:
               if asset_path.suffix.lower() == '.png':
                 continue
             assert asset_id not in manifests, asset_id
-            pattern = str(pathlib.PurePosixPath(*asset_path.parts[:5]))
+            pattern = str(pathlib.PurePosixPath('exported/ExportedProject', *asset_path.parts[:5]))
             asset_paths = list(pathlib.Path(directory).glob(pattern, case_sensitive=False))
             assert len(asset_paths) == 1, f'len({pathlib.Path(directory)!r}.glob({pattern})) == {len(asset_paths)}: {asset_paths}'
             asset_path = asset_paths[0]
@@ -487,27 +488,29 @@ def load_blueprints[T: Blueprint](
     upgrade_specs: typing.Callable[[dict[str, list[PartialBlueprint[T]]]], None] | None = None,
 ) -> list[T]:
 
-  all_paths = []
+  all_paths: list[tuple[int, pathlib.Path | zipfile.Path]] = []
   for i, directory in enumerate(args.directories):
     # TODO This should iterate over all files and index by available Specs instead
     blueprint = cls.__name__.removesuffix('Blueprint')
-    pattern = f'../../Blueprints/**/{blueprint}.*.blueprint.json' if i else f'Assets/StreamingAssets/Modding/Blueprints/**/{blueprint}.*.blueprint.json'
-    logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
-    paths = [p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta')]
+    pattern_dir = f'Blueprints' if i else f'StreamingAssets/Modding/Blueprints.zip'
+    pattern_path = autoPath(pathlib.Path.joinpath(directory, pattern_dir))
+    pattern = f'**/{blueprint}.*.blueprint.json'
+    logging.debug(f'Scanning {pathlib.PurePath(directory).joinpath(pattern)}:')
+    paths = list(pattern_path.glob(pattern))
     # if i and blueprint == 'ToolGroup':  # HACK Handle alternate filenames for TimberAPI
-    #   pattern = f'../../Blueprints/**/TimberApiToolGroup.*.blueprint.json'
-    #   logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
+    #   pattern = f'Blueprints/**/TimberApiToolGroup.*.blueprint.json'
+    #   logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern)}:')
     #   paths.extend(p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta'))
     # if i:  # HACK Handle legacy filenames for Waterbeavers
-    #   pattern = f'../../Blueprints/**/{blueprint}Specification.*.blueprint.json'
-    #   logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
+    #   pattern = f'Blueprints/**/{blueprint}Specification.*.blueprint.json'
+    #   logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern)}:')
     #   paths.extend(p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta'))
-    assert paths or i or upgrade_specs, pathlib.Path(directory).joinpath(pattern).resolve()
+    assert paths or i or upgrade_specs, pathlib.PurePath(directory).joinpath(pattern)
     all_paths.extend((i, path) for path in paths)
 
   all_specs: dict[str, list[PartialBlueprint[T]]] = {}
   for i, p in track(f'Loading {cls.__name__.replace('Blueprint', ' blueprints')}', all_paths, total=len(all_paths)):
-    logging.debug(f'Loading {p.resolve()}')
+    logging.debug(f'Reading {p}')
     blueprint_name, _, name = p.stem.lower().partition('.')
     # assert blueprint_name + 'blueprint' == cls.__name__.lower(), f'{blueprint_name}blueprint == {cls.__name__.lower()}'
     assert (
@@ -517,7 +520,7 @@ def load_blueprints[T: Blueprint](
     ), f'{blueprint_name}blueprint == {cls.__name__.lower()}'  # HACK for Waterbeavers
     optional = name.endswith('.optional')
     name = name.replace('.optional', '')
-    with open(p, 'rt', encoding='utf-8-sig') as f:
+    with p.open('r', encoding='utf-8-sig') as f:
       try:
         doc = typing.cast(T, json5.load(f, strict=False))
       except Exception as e:
@@ -532,7 +535,7 @@ def load_blueprints[T: Blueprint](
     for p, optional, doc in sorted(l, key=lambda i: (i.optional)):
       if optional:
         if name not in merged_specs:
-          logging.debug(f'Skipping optional {p.resolve()}')
+          logging.debug(f'Skipping optional {p}')
           continue
         # assert name in merged_specs, name
       spec = merged_specs.setdefault(name, cls())
@@ -545,17 +548,18 @@ def load_template(
     manifests: dict[str, str],
     file_path: str,
 ):
+  # TODO: Remove manifests and load templates as blueprints
   if file_path.lower() in manifests:
     directory = manifests[file_path.lower()]
   else:
     directory = manifests['']
   pattern = f'{file_path}.json'
 
-  paths = list(pathlib.Path(directory).glob(pattern, case_sensitive=False))
+  paths = list(autoPath(directory).glob(pattern))
   assert len(paths) == 1, f'len({pathlib.Path(directory)!r}.glob({pattern})) == {len(paths)}: {paths}'
-  logging.debug(f'Loading {paths[0].relative_to(directory)}')
+  logging.debug(f'Loading {pathlib.Path(str(paths[0])).relative_to(directory)}')
 
-  with open(paths[0], 'rt') as f:
+  with paths[0].open('r', encoding='utf-8-sig') as f:
     template: TemplateBlueprint = typing.cast(TemplateBlueprint, json5.load(f))
     template['Id'] = paths[0].stem.replace('.blueprint', '')
   return template
@@ -599,27 +603,29 @@ def load_templates_and_tools(
 
 
 def load_translations(args: argparse.Namespace, language: str):
-  csv.register_dialect('timberborn', skipinitialspace=True, strict=True)
+  csv.register_dialect('timberborn', skipinitialspace=True)  # HACK: , strict=True)  # Work around for bad escaping in enUS Demolishable.Science.Grants
   catalog: dict[str, str] = {}
   for i, directory in enumerate(args.directories):
-    pattern_dir = f'../../Localizations/' if i else f'Assets/StreamingAssets/Modding/Localizations/'
-    patterns = [f'{pattern_dir}{language}{suffix}' for suffix in ['*.txt', '*.csv']]
-    paths = []
+    pattern_dir = f'Localizations' if i else f'StreamingAssets/Modding/Localizations.zip'
+    pattern_path = autoPath(pathlib.Path.joinpath(directory, pattern_dir))
+    patterns = [f'{language}{suffix}' for suffix in ['*.txt', '*.csv']]
+    paths: list[os.PathLike] = []
     for pattern in patterns:
-      paths.extend(pathlib.Path(directory).glob(pattern, case_sensitive=False))
+      paths.extend(pathlib.Path(str(p)).relative_to(str(pattern_path)) for p in pattern_path.glob(pattern))
     # assert len(paths) <= 1, f'len(glob({pattern})) == {len(paths)}: {paths}'
     for x in paths:
-      with open(x, 'rt', encoding='utf-8-sig') as f:
+      loc_path = pattern_path.joinpath(x)
+      with loc_path.open('r', encoding='utf-8-sig') as f:
         reader = csv.DictReader(f, dialect='timberborn')
         try:
           for row in reader:
             if not i and row['ID'] in catalog:
-              logging.warning(f'Duplicate key {row['ID']!r} on line {reader.line_num} of {x.resolve()}')
+              logging.warning(f'Duplicate key {row['ID']!r} on line {reader.line_num} of {loc_path}')
               # For duplicate key in WB en_US
-              assert row['ID'] not in catalog, f'Duplicate key {row['ID']!r} on line {reader.line_num} of {x.resolve()}'
+              assert row['ID'] not in catalog, f'Duplicate key {row['ID']!r} on line {reader.line_num} of {loc_path}'
             catalog[row['ID']] = row['Text']
         except Exception as e:
-          e.add_note(f'Loading {x.resolve()} on line {reader.line_num}')
+          e.add_note(f'Loading {loc_path} on line {reader.line_num}')
           raise
 
   catalog['Pictogram.Dwellers'] = '🛌'
@@ -709,7 +715,7 @@ class Index():
             pass
         else:
           with doc.tag('style'):
-            with open('style.css', 'rt', encoding='utf-8-sig') as f:
+            with open('style.css', 'r', encoding='utf-8-sig') as f:
               doc.asis('\n' + f.read())
       with doc.tag('body'):
         doc.line('h1', 'Timbertrees')
@@ -724,7 +730,7 @@ class Index():
                     doc.text(' ')
         with doc.tag('script'):
           doc.asis(f'var manifests = {json5.dumps(versions, indent=2, trailing_commas=False)};')
-    with open(filename, 'wt', encoding='utf-8') as f:
+    with open(filename, 'w', encoding='utf-8') as f:
       print(yattag.indent(doc.getvalue()), file=f)
 
 
@@ -1007,11 +1013,11 @@ class HtmlGenerator(Generator):
     super().__init__(*args, **kwargs)
     if not self.style:
       logging.debug('Loading style.css')
-      with open('style.css', 'rt', encoding='utf-8-sig') as f:
+      with open('style.css', 'r', encoding='utf-8-sig') as f:
         type(self).style = f.read()
     if not self.script:
       logging.debug('Loading script.js')
-      with open('script.js', 'rt', encoding='utf-8-sig') as f:
+      with open('script.js', 'r', encoding='utf-8-sig') as f:
         type(self).script = f.read()
 
   class Header:
@@ -1303,7 +1309,7 @@ class HtmlGenerator(Generator):
     self.doc.asis('<!DOCTYPE html>')
     with self.doc.tag('html'):
       self.RenderFaction(self.faction, pathlib.Path(filename))
-    with open(f'{filename}.html', 'wt', encoding='utf-8') as f:
+    with open(f'{filename}.html', 'w', encoding='utf-8') as f:
       print(yattag.indent(self.doc.getvalue()), file=f)
     self.index.AddItem(self.gettext, self.faction, self.gettext(self.faction['FactionSpec']['DisplayNameLocKey']), f'{filename}.html')
 
@@ -1502,7 +1508,7 @@ class TextGenerator(Generator):
     self.stack = [[]]
     self.RenderFaction(self.faction)
     lines, = self.stack
-    with open(f'{filename}.txt', 'wt', encoding='utf-8') as f:
+    with open(f'{filename}.txt', 'w', encoding='utf-8') as f:
       for line in lines:
         print(line, file=f)
     self.index.AddItem(self.gettext, self.faction, '[txt]', f'{filename}.txt')
@@ -1511,7 +1517,7 @@ class TextGenerator(Generator):
 def expand_directories(directories: list[str]):
   result = []
   for directory in directories:
-    pattern = pathlib.Path(directory).expanduser()
+    pattern = pathlib.Path(os.path.expandvars(directory)).expanduser()
     for parent in pattern.parents:
       if parent.exists(): break
     for path in braceexpand.braceexpand(str(pattern.relative_to(parent)), escape=False):
@@ -1521,10 +1527,29 @@ def expand_directories(directories: list[str]):
   return result
 
 
+def autoPath(path: str | os.PathLike) -> pathlib.Path | zipfile.Path:
+  path = pathlib.Path(path)
+  if path.suffix.lower() == '.zip' and path.exists():
+    return zipfile.Path(path)
+  else:
+    return path
+
+
 def main():
+  data_directories = [
+    '%ProgramFiles(x86)%\\Steam\\steamapps\\common\\Timberborn\\Timberborn_Data',
+    '~/Library/Application Support/Steam/steamapps/common/Timberborn/Timberborn.app/Contents/Resources/Data',
+    '~/.steam/steam/steamapps/common/Timberborn/Timberborn_Data'
+  ]
+  data_directories = [
+    dir for dir in data_directories if pathlib.Path(os.path.expandvars(dir)).expanduser().exists()
+  ]
+  mod_directories = []
+
   parser = argparse.ArgumentParser(add_help=False)
-  parser.add_argument('-d', '--directory', help='full path to ExportedProject(s)', action='append', dest='directories', default=[], required=True)
-  parser.add_argument('-o', '--output', help='output path', default='out')
+  parser.add_argument('-d', '--data', help='path to Timberborn Data directory', action='append', dest='data_directories', default=data_directories, metavar='PATH')
+  parser.add_argument('-m', '--mods', help='path to Timberborn Mods directory', action='append', dest='mod_directories', default=mod_directories, metavar='PATH')
+  parser.add_argument('-o', '--output', help='output path', default='out', metavar='PATH')
   language_arg = parser.add_argument('-l', '--language')
   parser.add_argument('-g', '--graph_grouping_threshold', help='threshold to split buildings with too-many recipes', type=int, default=5)
   parser.add_argument('-q', '--quiet', help='quiet mode (less messages)', action='store_true')
@@ -1534,30 +1559,39 @@ def main():
   hparser = argparse.ArgumentParser(parents=[parser], add_help=False)
   hparser.add_argument('-h', '--help', action='store_true')
   args = hparser.parse_args()
-  args.directories = expand_directories(args.directories)
+  if len(args.data_directories) > len(data_directories):
+    args.data_directories = args.data_directories[len(data_directories):]
+  if len(args.mod_directories) > len(mod_directories):
+    args.mod_directories = args.mod_directories[len(mod_directories):]
+  args.directories = expand_directories(args.data_directories + args.mod_directories)
 
   languages = []
   for i, directory in enumerate(args.directories):
-    pattern_dir = f'../../Localizations/' if i else f'Assets/StreamingAssets/Modding/Localizations/'
-    patterns = [f'{pattern_dir}{suffix}' for suffix in ['*.txt', '*.csv']]
-    paths = []
+    pattern_dir = f'Localizations' if i else f'StreamingAssets/Modding/Localizations.zip'
+    pattern_path = autoPath(pathlib.Path.joinpath(directory, pattern_dir))
+    patterns = ['*.txt', '*.csv']
+    paths: list[pathlib.Path] = []
     for pattern in patterns:
-      paths.extend(pathlib.Path(directory).glob(pattern, case_sensitive=False))
+      paths.extend(pathlib.Path(str(p)) for p in pattern_path.glob(pattern))
     for p in paths:
-      if p.match('*_*') or p.match('reference*'):
+      if p.match('*_*'):
         continue
       language = p.relative_to(directory).stem
       if language not in languages:
         languages.append(language)
-    languages.sort(key=lambda x: (len(x), x))
-  if not languages:
-    raise SystemExit('No languages found, make sure the directory option points to an ExportedProject')
+  languages.sort(key=lambda x: (len(x), x))
 
   language_arg.help=f'localization language to use (valid options: {', '.join(['all'] + languages)})'
   parser = argparse.ArgumentParser(parents=[parser])
   args = parser.parse_args()
-  args.directories = expand_directories(args.directories)
+  if len(args.data_directories) > len(data_directories):
+    args.data_directories = args.data_directories[len(data_directories):]
+  if len(args.mod_directories) > len(mod_directories):
+    args.mod_directories = args.mod_directories[len(mod_directories):]
+  args.directories = expand_directories(args.data_directories + args.mod_directories)
 
+  if not languages:
+    raise SystemExit('No languages found, make sure the data option points Timberborn Data directory')
   if args.language == 'all':
     args.languages = languages
   else:
@@ -1632,7 +1666,7 @@ def main():
       tools=tools,
       templates=templates,
     )
-    with open(cache_file + '.json', 'wt', encoding='utf-8') as f:
+    with open(cache_file + '.json', 'w', encoding='utf-8') as f:
       json5.dump(d, f, indent=2, quote_keys=True, trailing_commas=False)
     with open(cache_file, 'wb') as f:
       pickle.dump(d, f, protocol=pickle.HIGHEST_PROTOCOL)
