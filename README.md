@@ -21,8 +21,8 @@ mod locations in the command, eg:
 ```sh
 $ python3 timbertrees.py \
     -d .../path/to/Timberborn/Timberborn_Data \
-    -d $mod1-abc \
-    -d $mod2_1.2.3-xyz
+    -m .../path/to/mod1-abc \
+    -m .../path/to/mod2_1.2.3-xyz
 ```
 
 ## Troubleshooting:

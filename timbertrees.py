@@ -313,15 +313,18 @@ def track[T](
   return rich.progress.track(sequence, '%-39s' % description, **kwargs)
 
 
-def load_versions(args: argparse.Namespace) -> tuple[list[dict[str, typing.Any]], dict[str, str]]:
+def load_versions(directories: list[pathlib.Path], pattern: str) -> list[dict[str, typing.Any]]:
   versions: list[dict[str, typing.Any]] = []
-  prefixes: dict[str, str] = {}
-  for directory in track('Loading versions', args.directories, transient=True):
+  ids: set[str] = set()
+  for directory in track('Loading versions', directories, transient=True):
     paths = []
     for pattern in ('StreamingAssets/VersionNumbers.json', 'manifest.json'):
-      logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
-      paths.extend(pathlib.Path(directory).glob(pattern, case_sensitive=False))
-    assert len(paths) == 1, f'len({pathlib.Path(directory)!r} versions)) == {len(paths)}: {paths}'
+      logging.debug(f'Scanning {directory.joinpath(pattern).resolve()}:')
+      paths.extend(directory.glob(pattern, case_sensitive=False))
+    if not paths:
+      logging.warning('Skipping %s', directory)
+      continue
+    assert len(paths) == 1, f'Expected single version manifest in {directory}, found: {paths}'
     with paths[0].open('r', encoding='utf-8-sig') as f:
       try:
         doc = typing.cast(dict, json5.load(f, strict=False))
@@ -329,15 +332,15 @@ def load_versions(args: argparse.Namespace) -> tuple[list[dict[str, typing.Any]]
         e.add_note(f'in {paths[0]}')
         raise
     if 'Id' not in doc:
-      assert '' not in prefixes, f'Multiple game directories'
-      prefixes[''] = directory
+      assert '' not in ids, f'Multiple game directories'
+      ids.add('')
       logging.info('Loading version %s of %s', doc['CurrentVersion'], 'Timberborn')
     else:
-      assert doc['Id'] not in prefixes, f'{doc['Id']} loaded twice!'
-      prefixes[doc['Id']] = directory
+      assert doc['Id'] not in ids, f'{doc['Id']} loaded twice!'
+      ids.add(doc['Id'])
       logging.info('Loading version %s of %s', doc['Version'], doc['Name'])
     versions.append(doc)
-  return versions, prefixes
+  return versions
 
 
 def upgrade_toolgroup_blueprints(
@@ -448,26 +451,26 @@ def merge_into_spec(
 
 
 def load_blueprint_jsons[T: Blueprint](
-    args: argparse.Namespace,
+    directories: list[pathlib.Path],
     blueprint: str,
     pattern: str,
     disable_progess = False,
     upgrade_specs: typing.Callable[[dict[str, list[PartialBlueprint[T]]]], None] | None = None,
 ) -> list[T]:
   all_paths: list[tuple[int, pathlib.Path | zipfile.Path]] = []
-  for i, directory in enumerate(args.directories):
+  for i, directory in enumerate(directories):
     # TODO This should iterate over all files and index by available Specs instead
     pattern_dir = '' if i else f'StreamingAssets/Modding/Blueprints.zip'
-    pattern_path = autoPath(pathlib.Path.joinpath(directory, pattern_dir))
+    pattern_path = autoPath(directory.joinpath(pattern_dir))
     logging.debug(f'Scanning {pattern_path.joinpath(pattern)}:')
     paths = list(pattern_path.glob(pattern))
     # if i and blueprint == 'BlockObjectToolGroup':  # HACK Handle alternate filenames for TimberAPI
     #   pattern = f'**/TimberApiToolGroup.*.blueprint.json'
-    #   logging.debug(f'Scanning {pathlib.PurePath(directory).joinpath(pattern)}:')
+    #   logging.debug(f'Scanning {directory.joinpath(pattern)}:')
     #   paths.extend(pattern_path.glob(pattern))
     # if i:  # HACK Handle legacy filenames for Waterbeavers
     #   pattern = f'**/{blueprint}Specification.*.blueprint.json'
-    #   logging.debug(f'Scanning {pathlib.PurePath(directory).joinpath(pattern)}:')
+    #   logging.debug(f'Scanning {directory.joinpath(pattern)}:')
     #   paths.extend(pattern_path.glob(pattern))
     assert paths or i or upgrade_specs, pattern_path.joinpath(pattern)
     all_paths.extend((i, path) for path in paths)
@@ -509,13 +512,13 @@ def load_blueprint_jsons[T: Blueprint](
 
 
 def load_blueprints[T: Blueprint](
-    args: argparse.Namespace,
+    directories: list[pathlib.Path],
     cls: type[T],
     upgrade_specs: typing.Callable[[dict[str, list[PartialBlueprint[T]]]], None] | None = None,
 ) -> list[T]:
   blueprint = cls.__name__.removesuffix('Blueprint')
   return load_blueprint_jsons(
-    args,
+    directories,
     blueprint,
     f'Blueprints/**/{blueprint}.*.blueprint.json',
     upgrade_specs=upgrade_specs,
@@ -523,12 +526,12 @@ def load_blueprints[T: Blueprint](
 
 
 def load_template(
-    args: argparse.Namespace,
+    directories: list[pathlib.Path],
     file_path: str,
 ) -> TemplateBlueprint:
   blueprint = pathlib.PurePath(file_path).stem
   templates = load_blueprint_jsons(
-    args,
+    directories,
     blueprint,
     f'{file_path}.json',
     disable_progess=True,
@@ -538,21 +541,22 @@ def load_template(
 
 
 def load_templates_and_tools(
-    args: argparse.Namespace,
+    directories: list[pathlib.Path],
     factions: dict[str, FactionBlueprint],
+    debug: bool,
 ) -> tuple[dict[str, dict[str, TemplateBlueprint]], dict[str, list[ToolBlueprint]]]:
-  map = builtins.map if args.debug else concurrent.futures.ProcessPoolExecutor().map
+  map = builtins.map if debug else concurrent.futures.ProcessPoolExecutor().map
   templates: dict[str, dict[str, TemplateBlueprint]] = {'common': {}}
   tools: dict[str, list[ToolBlueprint]] = {}
 
-  template_collections = load_blueprints(args, TemplateCollectionBlueprint)
+  template_collections = load_blueprints(directories, TemplateCollectionBlueprint)
   commonpaths = list(itertools.chain.from_iterable(
     typing.cast(list, b['TemplateCollectionSpec']['Blueprints']) for b in template_collections if b['TemplateCollectionSpec']['CollectionId'].lower() == 'common'))
 
-  for template in track(f'Loading common templates', map(load_template, *zip(*((args, template) for template in commonpaths))), total=len(commonpaths)):
+  for template in track(f'Loading common templates', map(load_template, *zip(*((directories, template) for template in commonpaths))), total=len(commonpaths)):
     assert template and template['Id'].lower() not in templates['common']
     templates['common'][template['Id'].lower()] = template
-  tools['common'] = load_blueprints(args, ToolBlueprint, functools.partial(upgrade_tool_blueprints, templates['common']))
+  tools['common'] = load_blueprints(directories, ToolBlueprint, functools.partial(upgrade_tool_blueprints, templates['common']))
 
   for key, faction in factions.items():
     if faction['FactionSpec']['NewGameFullAvatar'].endswith('NO'):
@@ -563,24 +567,24 @@ def load_templates_and_tools(
     faction_templates = list(itertools.chain.from_iterable(
       typing.cast(list, b['TemplateCollectionSpec']['Blueprints']) for b in template_collections if b['TemplateCollectionSpec']['CollectionId'].lower() in faction_collections))
     templates[key] = {}
-    for template in track(f'Loading {faction['FactionSpec']['Id']} templates', map(load_template, *zip(*((args, template) for template in faction_templates))), total=len(faction_templates)):
+    for template in track(f'Loading {faction['FactionSpec']['Id']} templates', map(load_template, *zip(*((directories, template) for template in faction_templates))), total=len(faction_templates)):
       assert template
       assert template['Id'].lower() not in templates[key], template['Id']
       if template['Id'].lower() in templates[key]:
         breakpoint()
       templates[key][template['Id'].lower()] = template
-    tools[key] = load_blueprints(args, ToolBlueprint, functools.partial(upgrade_tool_blueprints, templates[key]))
+    tools[key] = load_blueprints(directories, ToolBlueprint, functools.partial(upgrade_tool_blueprints, templates[key]))
   return templates, tools
 
 
-def load_translations(args: argparse.Namespace, language: str):
+def load_translations(directories: list[pathlib.Path], language: str):
   csv.register_dialect('timberborn', skipinitialspace=True)  # HACK: , strict=True)  # Work around for bad escaping in enUS Demolishable.Science.Grants
   catalog: dict[str, str] = {}
-  for i, directory in enumerate(args.directories):
+  for i, directory in enumerate(directories):
     pattern_dir = f'Localizations' if i else f'StreamingAssets/Modding/Localizations.zip'
-    pattern_path = autoPath(pathlib.Path.joinpath(directory, pattern_dir))
+    pattern_path = autoPath(directory.joinpath(pattern_dir))
     patterns = [f'{language}{suffix}' for suffix in ['*.txt', '*.csv']]
-    paths: list[os.PathLike] = []
+    paths: list[pathlib.Path] = []
     for pattern in patterns:
       paths.extend(pathlib.Path(str(p)).relative_to(str(pattern_path)) for p in pattern_path.glob(pattern))
     # assert len(paths) <= 1, f'len(glob({pattern})) == {len(paths)}: {paths}'
@@ -936,7 +940,6 @@ class GraphGenerator(Generator):
       labelloc='t',
       fontsize=self.FONTSIZE * 1.5,
       rankdir='LR',
-      # imagepath=args.directories[0],
       # ratio=9 / 16,
       penwidth=2,
       bgcolor='#1d2c38',
@@ -1485,8 +1488,8 @@ class TextGenerator(Generator):
     self.index.AddItem(self.gettext, self.faction, '[txt]', f'{filename}.txt')
 
 
-def expand_directories(directories: list[str]):
-  result = []
+def expand_directories(directories: list[str]) -> list[pathlib.Path]:
+  result: list[pathlib.Path] = []
   for directory in directories:
     pattern = pathlib.Path(os.path.expandvars(directory)).expanduser()
     for parent in pattern.parents:
@@ -1494,8 +1497,37 @@ def expand_directories(directories: list[str]):
     for path in braceexpand.braceexpand(str(pattern.relative_to(parent)), escape=False):
       paths = list(parent.glob(path))
       assert len(paths) > 0, f'len(glob({parent.joinpath(path)})) > 0'
-      result.extend(paths)
+      for path in paths:
+        result.append(pathlib.Path(path))
   return result
+
+
+def get_directories_and_versions(
+    data_directories: list[str],
+    mod_directories: list[str],
+) -> tuple[list[pathlib.Path], dict[str, dict[str, typing.Any]]]:
+  game_directories = expand_directories(data_directories)
+  assert len(game_directories) == 1, f'Multiple game directories: {game_directories}'
+  version_list = load_versions(game_directories, 'StreamingAssets/VersionNumbers.json')
+  game_version = tuple(int(n) for n in version_list[0]['CurrentVersion'].split('.'))
+
+  mod_version_directories: list[pathlib.Path] = []
+  for directory in expand_directories(mod_directories):
+    mod_version_paths = list(pathlib.Path(directory).glob('version-*', case_sensitive=False))
+    if len(mod_version_paths) > 0:
+      mod_versions = []
+      for path in mod_version_paths:
+        version = tuple(int(n) for n in path.name.removeprefix('version-').split('.'))
+        if game_version >= version:
+          mod_versions.append(version)
+      mod_version = sorted(mod_versions, reverse=True)[0]
+      directory = directory.joinpath('version-' + '.'.join(str(n) for n in mod_version)) 
+    mod_version_directories.append(directory)
+
+  version_list.extend(load_versions(mod_version_directories, 'manifest.json'))
+  versions = {s.get('Id', 'timberborn').lower(): s for s in version_list}
+
+  return game_directories + mod_version_directories, versions
 
 
 def autoPath(path: str | os.PathLike) -> pathlib.Path | zipfile.Path:
@@ -1530,14 +1562,22 @@ def main():
   hparser = argparse.ArgumentParser(parents=[parser], add_help=False)
   hparser.add_argument('-h', '--help', action='store_true')
   args = hparser.parse_args()
+
+  logging.basicConfig(
+    level=logging.DEBUG if args.verbose else logging.WARNING if args.quiet else logging.INFO,
+    format='%(message)s',
+    datefmt='[%X]',
+    handlers=[rich.logging.RichHandler()],
+  )
+
   if len(args.data_directories) > len(data_directories):
     args.data_directories = args.data_directories[len(data_directories):]
   if len(args.mod_directories) > len(mod_directories):
     args.mod_directories = args.mod_directories[len(mod_directories):]
-  args.directories = expand_directories(args.data_directories + args.mod_directories)
+  directories, versions = get_directories_and_versions(args.data_directories, args.mod_directories)
 
   languages = []
-  for i, directory in enumerate(args.directories):
+  for i, directory in enumerate(directories):
     pattern_dir = f'Localizations' if i else f'StreamingAssets/Modding/Localizations.zip'
     pattern_path = autoPath(pathlib.Path.joinpath(directory, pattern_dir))
     patterns = ['*.txt', '*.csv']
@@ -1555,11 +1595,6 @@ def main():
   language_arg.help=f'localization language to use (valid options: {', '.join(['all'] + languages)})'
   parser = argparse.ArgumentParser(parents=[parser])
   args = parser.parse_args()
-  if len(args.data_directories) > len(data_directories):
-    args.data_directories = args.data_directories[len(data_directories):]
-  if len(args.mod_directories) > len(mod_directories):
-    args.mod_directories = args.mod_directories[len(mod_directories):]
-  args.directories = expand_directories(args.data_directories + args.mod_directories)
 
   if not languages:
     raise SystemExit('No languages found, make sure the data option points Timberborn Data directory')
@@ -1570,16 +1605,6 @@ def main():
   for l in args.languages:
     if l not in languages:
       parser.error(f'argument -l/--language: invalid choice: {l!r} (choose from {', '.join(['all'] + languages)})')
-
-  logging.basicConfig(
-    level=logging.DEBUG if args.verbose else logging.WARNING if args.quiet else logging.INFO,
-    format='%(message)s',
-    datefmt='[%X]',
-    handlers=[rich.logging.RichHandler()],
-  )
-
-  version_list, prefixes = load_versions(args)
-  versions = {s.get('Id', 'timberborn').lower(): s for s in version_list}
 
   cached = False
   hash = hashlib.sha256(repr(versions).encode())
@@ -1606,12 +1631,12 @@ def main():
     logging.warning(f'Missing/corrupt: {cache_file}')
 
   if not cached or args.debug:
-    factions = {b['FactionSpec']['Id'].lower(): b for b in sorted(load_blueprints(args, FactionBlueprint), key=lambda f: f['FactionSpec']['Order'])}
-    goods = {b['GoodSpec']['Id'].lower(): b for b in load_blueprints(args, GoodBlueprint)}
-    needgroups = {b['NeedGroupSpec']['Id'].lower(): b for b in load_blueprints(args, NeedGroupBlueprint)}
-    needs = {b['NeedSpec']['Id'].lower(): b for b in load_blueprints(args, NeedBlueprint)}
-    recipes = {b['RecipeSpec']['Id'].lower(): b for b in load_blueprints(args, RecipeBlueprint)}
-    toolgroups_by_id = {b['BlockObjectToolGroupSpec']['Id'].lower(): b for b in load_blueprints(args, BlockObjectToolGroupBlueprint, upgrade_toolgroup_blueprints)}
+    factions = {b['FactionSpec']['Id'].lower(): b for b in sorted(load_blueprints(directories, FactionBlueprint), key=lambda f: f['FactionSpec']['Order'])}
+    goods = {b['GoodSpec']['Id'].lower(): b for b in load_blueprints(directories, GoodBlueprint)}
+    needgroups = {b['NeedGroupSpec']['Id'].lower(): b for b in load_blueprints(directories, NeedGroupBlueprint)}
+    needs = {b['NeedSpec']['Id'].lower(): b for b in load_blueprints(directories, NeedBlueprint)}
+    recipes = {b['RecipeSpec']['Id'].lower(): b for b in load_blueprints(directories, RecipeBlueprint)}
+    toolgroups_by_id = {b['BlockObjectToolGroupSpec']['Id'].lower(): b for b in load_blueprints(directories, BlockObjectToolGroupBlueprint, upgrade_toolgroup_blueprints)}
     def ToolGroupKey(b: BlockObjectToolGroupBlueprint | None):
       if not b:
         return ()
@@ -1621,7 +1646,7 @@ def main():
         k = ToolGroupKey(toolgroups_by_id[groupId.lower()]) + k
       return k
     toolgroups = {tg['BlockObjectToolGroupSpec']['Id'].lower(): tg for tg in sorted(toolgroups_by_id.values(), key=lambda kg: ToolGroupKey(kg))}
-    templates, tool_lists = load_templates_and_tools(args, factions)
+    templates, tool_lists = load_templates_and_tools(directories, factions, args.debug)
     tools: dict[str, dict[str, ToolBlueprint]] = {}
     for key in tool_lists:
       tools[key] = {b['ToolSpec']['Id'].lower(): b for b in sorted(tool_lists[key], key=lambda t: (ToolGroupKey(toolgroups.get(t['ToolSpec']['GroupId'].lower())), t['ToolSpec']['Order']))}
@@ -1649,7 +1674,7 @@ def main():
     GraphGenerator,
   )
   for language in args.languages:
-    _ = load_translations(args, language)
+    _ = load_translations(directories, language)
     for faction in factions.values():
       if faction['FactionSpec']['NewGameFullAvatar'].endswith('NO'):
         logging.info(f'Skipping {faction['FactionSpec']['Id']} in {_('Settings.Language.Name')}: {_(faction['FactionSpec']['DisplayNameLocKey'])}')
