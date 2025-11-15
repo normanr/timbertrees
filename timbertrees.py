@@ -316,63 +316,28 @@ def track[T](
 def load_versions(args: argparse.Namespace) -> tuple[list[dict[str, typing.Any]], dict[str, str]]:
   versions: list[dict[str, typing.Any]] = []
   prefixes: dict[str, str] = {}
-  for i, directory in enumerate(track('Loading versions', args.directories, transient=True)):
-    pattern = 'manifest.json' if i else 'StreamingAssets/VersionNumbers.json'
-    logging.debug(f'Reading {pathlib.Path(directory).joinpath(pattern).resolve()}:')
-    paths = [p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False)]
-    assert len(paths) == 1, f'len({pathlib.Path(directory)!r}.glob({pattern})) == {len(paths)}: {paths}'
+  for directory in track('Loading versions', args.directories, transient=True):
+    paths = []
+    for pattern in ('StreamingAssets/VersionNumbers.json', 'manifest.json'):
+      logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
+      paths.extend(pathlib.Path(directory).glob(pattern, case_sensitive=False))
+    assert len(paths) == 1, f'len({pathlib.Path(directory)!r} versions)) == {len(paths)}: {paths}'
     with paths[0].open('r', encoding='utf-8-sig') as f:
       try:
         doc = typing.cast(dict, json5.load(f, strict=False))
       except Exception as e:
         e.add_note(f'in {paths[0]}')
         raise
-    if not i:
-      assert 'Id' not in doc, directory
+    if 'Id' not in doc:
+      assert '' not in prefixes, f'Multiple game directories'
       prefixes[''] = directory
       logging.info('Loading version %s of %s', doc['CurrentVersion'], 'Timberborn')
     else:
-      assert 'Id' in doc, directory
+      assert doc['Id'] not in prefixes, f'{doc['Id']} loaded twice!'
       prefixes[doc['Id']] = directory
       logging.info('Loading version %s of %s', doc['Version'], doc['Name'])
     versions.append(doc)
   return versions, prefixes
-
-
-def load_manifests(prefixes: dict[str, str]) -> dict[str, str]:
-  manifests: dict[str, str] = {}
-  for i, prefix in enumerate(track('Loading asset manifests', prefixes)):
-    directory = prefixes[prefix]
-    if not i:
-      manifests[''] = str(pathlib.Path(directory).joinpath('StreamingAssets/Modding/Blueprints.zip'))
-      continue
-    pattern = 'AssetBundles/*.manifest'
-    logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern).resolve()}:')
-    paths = [p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False)]
-    if not len(paths):
-      logging.warning(f'No asset manifests found in {pathlib.Path(directory).joinpath(directory, 'AssetBundles')}')
-    # assert len(paths) > 0, f'len(glob({pattern})) == {len(paths)}: {paths}'
-    assets: dict[str, str] = {}
-    for p in paths:
-      with open(p, 'r', encoding='utf-8-sig') as f:
-        doc = yaml.load(f, yaml.SafeLoader)
-        if 'Assets' in doc:
-          for asset in doc['Assets']:
-            asset_path = pathlib.PurePosixPath(asset)
-            mod_path = pathlib.PurePosixPath(*asset_path.parts[5:])
-            asset_id = str(mod_path.parent.joinpath(mod_path.stem)).lower()
-            if asset_id in manifests:
-              logging.warning(f'Duplicate {asset} asset, conflicts with {manifests[asset_id]}')
-              if asset_path.suffix.lower() == '.png':
-                continue
-            assert asset_id not in manifests, asset_id
-            pattern = str(pathlib.PurePosixPath('exported/ExportedProject', *asset_path.parts[:5]))
-            asset_paths = list(pathlib.Path(directory).glob(pattern, case_sensitive=False))
-            assert len(asset_paths) == 1, f'len({pathlib.Path(directory)!r}.glob({pattern})) == {len(asset_paths)}: {asset_paths}'
-            asset_path = asset_paths[0]
-            assets[asset_id] = str(asset_path)
-    manifests.update(assets)
-  return manifests
 
 
 def upgrade_toolgroup_blueprints(
@@ -482,42 +447,41 @@ def merge_into_spec(
       spec[k] = v
 
 
-def load_blueprints[T: Blueprint](
+def load_blueprint_jsons[T: Blueprint](
     args: argparse.Namespace,
-    cls: type[T],
+    blueprint: str,
+    pattern: str,
+    disable_progess = False,
     upgrade_specs: typing.Callable[[dict[str, list[PartialBlueprint[T]]]], None] | None = None,
 ) -> list[T]:
-
   all_paths: list[tuple[int, pathlib.Path | zipfile.Path]] = []
   for i, directory in enumerate(args.directories):
     # TODO This should iterate over all files and index by available Specs instead
-    blueprint = cls.__name__.removesuffix('Blueprint')
-    pattern_dir = f'Blueprints' if i else f'StreamingAssets/Modding/Blueprints.zip'
+    pattern_dir = '' if i else f'StreamingAssets/Modding/Blueprints.zip'
     pattern_path = autoPath(pathlib.Path.joinpath(directory, pattern_dir))
-    pattern = f'**/{blueprint}.*.blueprint.json'
-    logging.debug(f'Scanning {pathlib.PurePath(directory).joinpath(pattern)}:')
+    logging.debug(f'Scanning {pattern_path.joinpath(pattern)}:')
     paths = list(pattern_path.glob(pattern))
-    # if i and blueprint == 'ToolGroup':  # HACK Handle alternate filenames for TimberAPI
-    #   pattern = f'Blueprints/**/TimberApiToolGroup.*.blueprint.json'
-    #   logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern)}:')
-    #   paths.extend(p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta'))
+    # if i and blueprint == 'BlockObjectToolGroup':  # HACK Handle alternate filenames for TimberAPI
+    #   pattern = f'**/TimberApiToolGroup.*.blueprint.json'
+    #   logging.debug(f'Scanning {pathlib.PurePath(directory).joinpath(pattern)}:')
+    #   paths.extend(pattern_path.glob(pattern))
     # if i:  # HACK Handle legacy filenames for Waterbeavers
-    #   pattern = f'Blueprints/**/{blueprint}Specification.*.blueprint.json'
-    #   logging.debug(f'Scanning {pathlib.Path(directory).joinpath(pattern)}:')
-    #   paths.extend(p for p in pathlib.Path(directory).glob(pattern, case_sensitive=False) if not p.match('*.meta'))
-    assert paths or i or upgrade_specs, pathlib.PurePath(directory).joinpath(pattern)
+    #   pattern = f'**/{blueprint}Specification.*.blueprint.json'
+    #   logging.debug(f'Scanning {pathlib.PurePath(directory).joinpath(pattern)}:')
+    #   paths.extend(pattern_path.glob(pattern))
+    assert paths or i or upgrade_specs, pattern_path.joinpath(pattern)
     all_paths.extend((i, path) for path in paths)
 
   all_specs: dict[str, list[PartialBlueprint[T]]] = {}
-  for i, p in track(f'Loading {cls.__name__.replace('Blueprint', ' blueprints')}', all_paths, total=len(all_paths)):
+  for i, p in track(f'Loading {blueprint} blueprints', all_paths, total=len(all_paths), disable=disable_progess):
     logging.debug(f'Reading {p}')
     blueprint_name, _, name = p.stem.lower().partition('.')
-    # assert blueprint_name + 'blueprint' == cls.__name__.lower(), f'{blueprint_name}blueprint == {cls.__name__.lower()}'
-    assert (
-      blueprint_name + 'blueprint' == cls.__name__.lower()
-      # blueprint_name.replace('timberapi', '') + 'blueprint' == cls.__name__.lower() or
-      # blueprint_name.replace('specification', 'blueprint') == cls.__name__.lower() or
-    ), f'{blueprint_name}blueprint == {cls.__name__.lower()}'  # HACK for Waterbeavers
+    assert blueprint_name == blueprint.lower().partition('.')[0], f'{blueprint_name} == {blueprint.lower().partition('.')[0]}'
+    # assert (
+    #   blueprint_name == blueprint.lower() or
+    #   blueprint_name.replace('timberapi', '') == blueprint.lower() or
+    #   blueprint_name.replace('specification', '') == blueprint.lower()
+    # ), f'{blueprint_name} == {blueprint.lower()}'  # HACK for Waterbeavers
     optional = name.endswith('.optional')
     name = name.replace('.optional', '')
     with p.open('r', encoding='utf-8-sig') as f:
@@ -538,36 +502,43 @@ def load_blueprints[T: Blueprint](
           logging.debug(f'Skipping optional {p}')
           continue
         # assert name in merged_specs, name
-      spec = merged_specs.setdefault(name, cls())
+      spec = merged_specs.setdefault(name, typing.cast(T, dict()))
       merge_into_spec(name, spec, doc.items())
 
   return [s for s in merged_specs.values()]
 
 
+def load_blueprints[T: Blueprint](
+    args: argparse.Namespace,
+    cls: type[T],
+    upgrade_specs: typing.Callable[[dict[str, list[PartialBlueprint[T]]]], None] | None = None,
+) -> list[T]:
+  blueprint = cls.__name__.removesuffix('Blueprint')
+  return load_blueprint_jsons(
+    args,
+    blueprint,
+    f'Blueprints/**/{blueprint}.*.blueprint.json',
+    upgrade_specs=upgrade_specs,
+  )
+
+
 def load_template(
-    manifests: dict[str, str],
+    args: argparse.Namespace,
     file_path: str,
-):
-  # TODO: Remove manifests and load templates as blueprints
-  if file_path.lower() in manifests:
-    directory = manifests[file_path.lower()]
-  else:
-    directory = manifests['']
-  pattern = f'{file_path}.json'
-
-  paths = list(autoPath(directory).glob(pattern))
-  assert len(paths) == 1, f'len({pathlib.Path(directory)!r}.glob({pattern})) == {len(paths)}: {paths}'
-  logging.debug(f'Loading {pathlib.Path(str(paths[0])).relative_to(directory)}')
-
-  with paths[0].open('r', encoding='utf-8-sig') as f:
-    template: TemplateBlueprint = typing.cast(TemplateBlueprint, json5.load(f))
-    template['Id'] = paths[0].stem.replace('.blueprint', '')
-  return template
+) -> TemplateBlueprint:
+  blueprint = pathlib.PurePath(file_path).stem
+  templates = load_blueprint_jsons(
+    args,
+    blueprint,
+    f'{file_path}.json',
+    disable_progess=True,
+  )
+  assert len(templates) == 1
+  return typing.cast(TemplateBlueprint, dict(Id=blueprint, **templates[0]))
 
 
 def load_templates_and_tools(
     args: argparse.Namespace,
-    manifests: dict[str, str],
     factions: dict[str, FactionBlueprint],
 ) -> tuple[dict[str, dict[str, TemplateBlueprint]], dict[str, list[ToolBlueprint]]]:
   map = builtins.map if args.debug else concurrent.futures.ProcessPoolExecutor().map
@@ -578,7 +549,7 @@ def load_templates_and_tools(
   commonpaths = list(itertools.chain.from_iterable(
     typing.cast(list, b['TemplateCollectionSpec']['Blueprints']) for b in template_collections if b['TemplateCollectionSpec']['CollectionId'].lower() == 'common'))
 
-  for template in track(f'Loading common templates', map(load_template, *zip(*((manifests, template) for template in commonpaths))), total=len(commonpaths)):
+  for template in track(f'Loading common templates', map(load_template, *zip(*((args, template) for template in commonpaths))), total=len(commonpaths)):
     assert template and template['Id'].lower() not in templates['common']
     templates['common'][template['Id'].lower()] = template
   tools['common'] = load_blueprints(args, ToolBlueprint, functools.partial(upgrade_tool_blueprints, templates['common']))
@@ -592,7 +563,7 @@ def load_templates_and_tools(
     faction_templates = list(itertools.chain.from_iterable(
       typing.cast(list, b['TemplateCollectionSpec']['Blueprints']) for b in template_collections if b['TemplateCollectionSpec']['CollectionId'].lower() in faction_collections))
     templates[key] = {}
-    for template in track(f'Loading {faction['FactionSpec']['Id']} templates', map(load_template, *zip(*((manifests, template) for template in faction_templates))), total=len(faction_templates)):
+    for template in track(f'Loading {faction['FactionSpec']['Id']} templates', map(load_template, *zip(*((args, template) for template in faction_templates))), total=len(faction_templates)):
       assert template
       assert template['Id'].lower() not in templates[key], template['Id']
       if template['Id'].lower() in templates[key]:
@@ -763,14 +734,14 @@ class Generator:
     self.tools_by_group = dict_group_by_id(tools.values(), 'ToolSpec.GroupId')
     self.templates = {template['Id'].lower(): template for template in templates.values() if 'TemplateSpec' in template}
     self.natural_resources: list[TemplateBlueprint] = sorted(
-      [p for p in templates.values() if 'NaturalResourceSpec' in p],
+      [p for p in self.templates.values() if 'NaturalResourceSpec' in p],
       key=lambda p: ('CropSpec' not in p, p['NaturalResourceSpec']['Order'])
     )
-    self.plantable_by_group = dict_group_by_id(templates.values(), 'PlantableSpec.ResourceGroup')
-    self.planter_building_by_group = dict_group_by_id(templates.values(), 'PlanterBuildingSpec.PlantableResourceGroup')
-    cuttable_by_group = dict_group_by_id(templates.values(), 'CuttableSpec.YielderSpec.ResourceGroup')
-    gatherable_by_group = dict_group_by_id(templates.values(), 'GatherableSpec.YielderSpec.ResourceGroup')
-    scavengable_by_group = dict_group_by_id(templates.values(), 'RuinSpec.YielderSpec.ResourceGroup')
+    self.plantable_by_group = dict_group_by_id(self.natural_resources, 'PlantableSpec.ResourceGroup')
+    self.planter_building_by_group = dict_group_by_id(self.templates.values(), 'PlanterBuildingSpec.PlantableResourceGroup')
+    cuttable_by_group = dict_group_by_id(self.natural_resources, 'CuttableSpec.YielderSpec.ResourceGroup')
+    gatherable_by_group = dict_group_by_id(self.natural_resources, 'GatherableSpec.YielderSpec.ResourceGroup')
+    scavengable_by_group = dict_group_by_id(self.templates.values(), 'RuinSpec.YielderSpec.ResourceGroup')
     self.yieldable_by_group: dict[
       str,
       tuple[typing.Literal['CuttableSpec'], list[TemplateBlueprint]] |
@@ -1650,8 +1621,7 @@ def main():
         k = ToolGroupKey(toolgroups_by_id[groupId.lower()]) + k
       return k
     toolgroups = {tg['BlockObjectToolGroupSpec']['Id'].lower(): tg for tg in sorted(toolgroups_by_id.values(), key=lambda kg: ToolGroupKey(kg))}
-    manifests = load_manifests(prefixes)
-    templates, tool_lists = load_templates_and_tools(args, manifests, factions)
+    templates, tool_lists = load_templates_and_tools(args, factions)
     tools: dict[str, dict[str, ToolBlueprint]] = {}
     for key in tool_lists:
       tools[key] = {b['ToolSpec']['Id'].lower(): b for b in sorted(tool_lists[key], key=lambda t: (ToolGroupKey(toolgroups.get(t['ToolSpec']['GroupId'].lower())), t['ToolSpec']['Order']))}
