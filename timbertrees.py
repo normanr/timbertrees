@@ -9,6 +9,7 @@ import csv
 import functools
 import hashlib
 import itertools
+import io
 import json5
 import logging
 import operator
@@ -450,6 +451,23 @@ def merge_into_spec(
       spec[k] = v
 
 
+def get_asset_content(f: io.TextIOWrapper):
+  def mono_behaviour_constructor(loader: yaml.Loader, node: yaml.MappingNode):
+    return loader.construct_mapping(node)
+
+  loader = yaml.SafeLoader(f)
+  try:
+    loader.add_constructor('tag:unity3d.com,2011:114', mono_behaviour_constructor)
+    asset = loader.get_single_data()
+  finally:
+    loader.dispose()
+  mono_behaviour = asset['MonoBehaviour']
+  guid = mono_behaviour['m_Script']['guid']
+  if guid == '13adc0e4713bee36fd631781df55c5df':  # Timberborn.BlueprintSystem.BlueprintAsset
+    return mono_behaviour['_content']
+  raise Exception(f'Unknown Script guid: {guid}')
+
+
 def load_blueprint_jsons[T: Blueprint](
     directories: list[pathlib.Path],
     blueprint: str,
@@ -472,8 +490,14 @@ def load_blueprint_jsons[T: Blueprint](
     #   pattern = f'**/{blueprint}Specification.*.blueprint.json'
     #   logging.debug(f'Scanning {directory.joinpath(pattern)}:')
     #   paths.extend(pattern_path.glob(pattern))
-    assert paths or i or upgrade_specs, pattern_path.joinpath(pattern)
+    if i and not paths:  # HACK to find blueprints for 1x1x2Storage
+      pattern2 = f'**/{pattern.replace('.json', '.blueprint.json')}'
+      paths.extend(pattern_path.glob(pattern2))
+    if i and not paths:  # HACK to find exported assets for Staircase
+      pattern2 = f'**/{pattern.replace('.json', '.blueprint.asset')}'
+      paths.extend(pattern_path.glob(pattern2))
     all_paths.extend((i, path) for path in paths)
+  assert all_paths or upgrade_specs, f'No blueprints found for {pattern}'
 
   all_specs: dict[str, list[PartialBlueprint[T]]] = {}
   for i, p in track(f'Loading {blueprint} blueprints', all_paths, total=len(all_paths), disable=disable_progess):
@@ -485,13 +509,16 @@ def load_blueprint_jsons[T: Blueprint](
     #   blueprint_name.replace('timberapi', '') == blueprint.lower() or
     #   blueprint_name.replace('specification', '') == blueprint.lower()
     # ), f'{blueprint_name} == {blueprint.lower()}'  # HACK for Waterbeavers
-    optional = name.endswith('.optional')
+    optional = name.endswith('.optional.blueprint')
     name = name.replace('.optional', '')
     with p.open('r', encoding='utf-8-sig') as f:
       try:
-        doc = typing.cast(T, json5.load(f, strict=False))
+        if p.suffix.lower().endswith('.asset'):
+          doc = typing.cast(T, json5.loads(get_asset_content(f), strict=False))
+        else:
+          doc = typing.cast(T, json5.load(f, strict=False))
       except Exception as e:
-        e.add_note(f'in {paths[0]}')
+        e.add_note(f'in {p}')
         raise
     all_specs.setdefault(name, []).append(PartialBlueprint(p, optional, doc))
   if upgrade_specs:
