@@ -490,6 +490,12 @@ def load_blueprint_jsons[T: Blueprint](
     #   pattern = f'**/{blueprint}Specification.*.blueprint.json'
     #   logging.debug(f'Scanning {directory.joinpath(pattern)}:')
     #   paths.extend(pattern_path.glob(pattern))
+    if i and not paths:  # HACK to find exported assets for Emberpelts
+      pattern2 = f'**/{pattern.replace('.blueprint.json', '.blueprint.asset')}'
+      paths.extend(pattern_path.glob(pattern2))
+    if i and not paths:  # HACK to find blueprints for Emberpelts BlockObjectToolGroups
+      pattern2 = f'**/{pattern.replace(blueprint, f'{blueprint}s')}'
+      paths.extend(pattern_path.glob(pattern2))
     if i and not paths:  # HACK to find blueprints for 1x1x2Storage
       pattern2 = f'**/{pattern.replace('.json', '.blueprint.json')}'
       paths.extend(pattern_path.glob(pattern2))
@@ -503,12 +509,17 @@ def load_blueprint_jsons[T: Blueprint](
   for i, p in track(f'Loading {blueprint} blueprints', all_paths, total=len(all_paths), disable=disable_progess):
     logging.debug(f'Reading {p}')
     blueprint_name, _, name = p.stem.lower().partition('.')
-    assert blueprint_name == blueprint.lower().partition('.')[0], f'{blueprint_name} == {blueprint.lower().partition('.')[0]}'
+    # assert blueprint_name == blueprint.lower().partition('.')[0], f'{blueprint_name} == {blueprint.lower().partition('.')[0]}'
+    assert (
+      blueprint_name == blueprint.lower().partition('.')[0] or
+      blueprint_name == blueprint.lower().partition('.')[0] + 's'
+    ), f'{blueprint_name} == {blueprint.lower().partition('.')[0]}'  # HACK for Emberpelts
     # assert (
-    #   blueprint_name == blueprint.lower() or
-    #   blueprint_name.replace('timberapi', '') == blueprint.lower() or
-    #   blueprint_name.replace('specification', '') == blueprint.lower()
-    # ), f'{blueprint_name} == {blueprint.lower()}'  # HACK for Waterbeavers
+    #   blueprint_name == blueprint.lower().partition('.')[0] or
+    #   blueprint_name == blueprint.lower().partition('.')[0] + 's'
+    #   blueprint_name.replace('timberapi', '') == blueprint.lower().partition('.')[0] or
+    #   blueprint_name.replace('specification', '') == blueprint.lower().partition('.')[0]
+    # ), f'{blueprint_name} == {blueprint.lower().partition('.')[0]}'  # HACK for Waterbeavers
     optional = name.endswith('.optional.blueprint')
     name = name.replace('.optional', '')
     with p.open('r', encoding='utf-8-sig') as f:
@@ -547,7 +558,7 @@ def load_blueprints[T: Blueprint](
   return load_blueprint_jsons(
     directories,
     blueprint,
-    f'Blueprints/**/{blueprint}.*.blueprint.json',
+    f'**/{blueprint}.*.blueprint.json',
     upgrade_specs=upgrade_specs,
   )
 
@@ -1152,9 +1163,9 @@ class HtmlGenerator(Generator):
   def RenderBuilding(self, building: TemplateBlueprint):
     _ = self.gettext
     line = self.doc.line
-    with self.tag('div', klass='building card') as header:
+    with self.tag('div', klass='building card'):
       name = _(building['LabeledEntitySpec']['DisplayNameLocKey']).replace('\n', ' ')
-      header.line('div', name, klass='name')
+      line('div', name, klass='name')
       with self.tag('div', klass='stats'):
         if building['BuildingSpec']['ScienceCost'] > 0:
           science = building['BuildingSpec']['ScienceCost']
@@ -1471,7 +1482,7 @@ class TextGenerator(Generator):
 
       super().RenderBuilding(building)
 
-    if not c and stats:
+    if not c:
       with self.NewContext(heading[:-1], forced=True) as c:
         pass
 
@@ -1659,6 +1670,7 @@ def main():
 
   if not cached or args.debug:
     factions = {b['FactionSpec']['Id'].lower(): b for b in sorted(load_blueprints(directories, FactionBlueprint), key=lambda f: f['FactionSpec']['Order'])}
+    # TODO: Handle FactionSpec.BlueprintModifiers
     goods = {b['GoodSpec']['Id'].lower(): b for b in load_blueprints(directories, GoodBlueprint)}
     needgroups = {b['NeedGroupSpec']['Id'].lower(): b for b in load_blueprints(directories, NeedGroupBlueprint)}
     needs = {b['NeedSpec']['Id'].lower(): b for b in load_blueprints(directories, NeedBlueprint)}
