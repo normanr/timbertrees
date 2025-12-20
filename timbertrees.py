@@ -100,13 +100,13 @@ class RecipeBlueprint(Blueprint):
 
 
 # TimberAPI specific and documented at https://timberapi.com/tools/
+# TODO Remove
 class ToolSpec(Spec):
   Id: str
   GroupId: str
   Order: int
   NameLocKey: str
   DevMode: typing.NotRequired[bool]
-  Hidden: typing.NotRequired[bool]
 
 
 class ToolBlueprint(Blueprint):
@@ -121,15 +121,34 @@ class BlockObjectToolGroupSpec(Spec):
   Icon: str
   FallbackGroup: bool
   # Added by TimberAPI
+  # TODO Remove
   Type: typing.NotRequired[str]
-  GroupId: typing.NotRequired[str]
   Layout: typing.NotRequired[str]
-  DevMode: typing.NotRequired[bool]
-  Hidden: typing.NotRequired[bool]
+
+
+# from Moddable Tool Groups at https://github.com/datvm/TimberbornMods/blob/master/ConfigurableToolGroups/Specs/ParentToolGroupSpec.cs
+class ParentToolGroupSpec(Spec):
+  ParentIds: list[str]
+
+
+# from Moddable Tool Groups at https://github.com/datvm/TimberbornMods/blob/master/ConfigurableToolGroups/Specs/ToolGroupChildrenSpec.cs
+class OrderedIds:
+  Id: str
+  Order: int
+
+
+class ToolGroupChildrenSpec(Spec):
+  ChildrenGroupsIds: list[str]
+  ChildrenToolsTemplateNames: list[str]
+  ChildrenOrderedIds: list[str]
+  ChildrenExplicitOrderedIds: list[OrderedIds]
+  DoNotIncludePlaceableToolGroup: bool
 
 
 class BlockObjectToolGroupBlueprint(Blueprint):
   BlockObjectToolGroupSpec: BlockObjectToolGroupSpec
+  ParentToolGroupSpec: typing.NotRequired[ParentToolGroupSpec]
+  ToolGroupChildrenSpec: typing.NotRequired[ToolGroupChildrenSpec]
 
 
 class FactionSpec(Spec):
@@ -280,6 +299,7 @@ class TemplateBlueprint(typing.TypedDict):
   LabeledEntitySpec: LabeledEntitySpec
   NaturalResourceSpec: NaturalResourceSpec
   PlaceableBlockObjectSpec: PlaceableBlockObjectSpec
+  ParentToolGroupSpec: typing.NotRequired[ParentToolGroupSpec]
   AreaNeedApplierSpec: AreaNeedApplierSpec
   RangedEffectBuildingSpec: RangedEffectBuildingSpec
   WorkshopRandomNeedApplierSpec: WorkshopRandomNeedApplierSpec
@@ -347,12 +367,6 @@ def load_versions(directories: list[pathlib.Path], pattern: str) -> list[dict[st
 def upgrade_toolgroup_blueprints(
     blueprints: dict[str, list[PartialBlueprint[BlockObjectToolGroupBlueprint]]]
 ):
-  for toolgroup_specs in blueprints.values():
-    for _, _, doc in toolgroup_specs:
-      if 'TimberApiToolGroupSpec' in doc:
-        doc.setdefault('BlockObjectToolGroupSpec', {}).update(doc['TimberApiToolGroupSpec'])
-      if 'Order' in doc['BlockObjectToolGroupSpec']:
-        doc['BlockObjectToolGroupSpec']['Order'] = int(doc['BlockObjectToolGroupSpec']['Order'])
   # TODO: Read Fields/Forestry from ToolGroups blueprints
   toolgroups = [
     BlockObjectToolGroupBlueprint(BlockObjectToolGroupSpec=BlockObjectToolGroupSpec(
@@ -447,6 +461,10 @@ def merge_into_spec(
       assert isinstance(v, dict), f'{name}.{k}: {v}'
       merge_into_spec(f'{name}.{k}', i, v.items())
     else:
+      if type(i) == float and type(v) == int:
+        logging.warning(f'{name}.{k}: {type(i)} vs {type(v)}')
+        assert v == float(v), f'{name}.{k}: {type(i)} vs {type(v)}'
+        v = float(v)  # upcast
       assert i is None or type(i) == type(v), f'{name}.{k}: {type(i)} vs {type(v)}'
       spec[k] = v
 
@@ -486,10 +504,9 @@ def load_blueprint_jsons[T: Blueprint](
     #   pattern = f'**/TimberApiToolGroup.*.blueprint.json'
     #   logging.debug(f'Scanning {directory.joinpath(pattern)}:')
     #   paths.extend(pattern_path.glob(pattern))
-    # if i:  # HACK Handle legacy filenames for Waterbeavers
-    #   pattern = f'**/{blueprint}Specification.*.blueprint.json'
-    #   logging.debug(f'Scanning {directory.joinpath(pattern)}:')
-    #   paths.extend(pattern_path.glob(pattern))
+    if i and blueprint == 'BlockObjectToolGroup':  # HACK Handle alternative filenames for Whitepaws
+      pattern2 = f'**/{pattern.replace('BlockObjectToolGroup', 'ToolGroup')}'
+      paths.extend(pattern_path.glob(pattern2))
     if i and not paths:  # HACK to find exported assets for Emberpelts
       pattern2 = f'**/{pattern.replace('.blueprint.json', '.blueprint.asset')}'
       paths.extend(pattern_path.glob(pattern2))
@@ -511,15 +528,10 @@ def load_blueprint_jsons[T: Blueprint](
     blueprint_name, _, name = p.stem.lower().partition('.')
     # assert blueprint_name == blueprint.lower().partition('.')[0], f'{blueprint_name} == {blueprint.lower().partition('.')[0]}'
     assert (
-      blueprint_name == blueprint.lower().partition('.')[0] or
-      blueprint_name == blueprint.lower().partition('.')[0] + 's'
-    ), f'{blueprint_name} == {blueprint.lower().partition('.')[0]}'  # HACK for Emberpelts
-    # assert (
-    #   blueprint_name == blueprint.lower().partition('.')[0] or
-    #   blueprint_name == blueprint.lower().partition('.')[0] + 's'
-    #   blueprint_name.replace('timberapi', '') == blueprint.lower().partition('.')[0] or
-    #   blueprint_name.replace('specification', '') == blueprint.lower().partition('.')[0]
-    # ), f'{blueprint_name} == {blueprint.lower().partition('.')[0]}'  # HACK for Waterbeavers
+      blueprint_name == blueprint.lower().partition('.')[0] + 's' or  # HACK for Emberpelts
+      blueprint_name == blueprint.lower().partition('.')[0].replace('blockobjecttoolgroup', 'toolgroup') or  # HACK for Whitepaws
+      blueprint_name == blueprint.lower().partition('.')[0]
+    ), f'{blueprint_name} == {blueprint.lower().partition('.')[0]}'
     optional = name.endswith('.optional.blueprint')
     name = name.replace('.optional', '')
     with p.open('r', encoding='utf-8-sig') as f:
@@ -680,11 +692,13 @@ def dict_group_by_id[T](iterable: typing.Iterable[T], key: str) -> dict[str, lis
         group = ''
         break
       group = typing.cast(dict, group)[key_part]
-    if group is not None:  # required for EffectSpecification --> EffectSpecificationPerHour rename
-      group = typing.cast(str, group).lower()
+    if type(group) == list:
+      for item in group:
+        item = typing.cast(str, item).lower()
+        groups.setdefault(item, []).append(value)
     else:
-      logging.warning(f'Missing key in dict_group_by_id: {key}')
-    groups.setdefault(group, []).append(value)
+      group = typing.cast(str, group).lower()
+      groups.setdefault(group, []).append(value)
   return groups
 
 
@@ -772,7 +786,9 @@ class Generator:
     self.needs = needs
     self.recipes = recipes
     self.toolgroups = toolgroups
-    self.toolgroups_by_group = dict_group_by_id(toolgroups.values(), 'ToolGroupSpec.GroupId')
+    # TODO Handle ToolGroupChildrenSpec
+    self.toolgroups_by_group = dict_group_by_id(toolgroups.values(), 'ParentToolGroupSpec.ParentIds')
+    # TODO Handle ParentToolGroupSpec and ToolGroupChildrenSpec
     self.tools_by_group = dict_group_by_id(tools.values(), 'ToolSpec.GroupId')
     self.templates = {template['Id'].lower(): template for template in templates.values() if 'TemplateSpec' in template}
     self.natural_resources: list[TemplateBlueprint] = sorted(
@@ -794,15 +810,6 @@ class Generator:
     self.yieldable_by_group.update({k: ('GatherableSpec', v) for k, v in gatherable_by_group.items()})
     self.yieldable_by_group.update({k: ('RuinSpec', v) for k, v in scavengable_by_group.items()})
 
-  def IsPlantableResourceGroupVisible(self, group: str) -> bool:
-    def IsToolGroupHidden(template: TemplateBlueprint) -> bool:
-      name = template['PlaceableBlockObjectSpec']['ToolGroupId']
-      tg = self.toolgroups.get(name.lower())
-      if not tg:
-        return True
-      return bool(tg.get('Hidden'))
-    return not all(IsToolGroupHidden(x) for x in self.planter_building_by_group[group.lower()])
-
   def RenderFaction(self, faction: FactionBlueprint):
     self.RenderNaturalResources(self.natural_resources)
     for b in self.toolgroups_by_group['']:
@@ -815,12 +822,6 @@ class Generator:
         self.RenderToolGroup(b)
 
   def RenderToolGroup(self, toolgroup: BlockObjectToolGroupBlueprint):
-    if toolgroup['BlockObjectToolGroupSpec'].get('DevMode'):
-      logging.debug(f'Skipping DevMode ToolGroup {toolgroup['BlockObjectToolGroupSpec']['Id']}')
-      return
-    if toolgroup['BlockObjectToolGroupSpec'].get('Hidden'):
-      logging.debug(f'Skipping Hidden ToolGroup {toolgroup['BlockObjectToolGroupSpec']['Id']}')
-      return
     items: list[tuple[int, typing.Literal[True], BlockObjectToolGroupBlueprint] | tuple[int, typing.Literal[False], ToolBlueprint]] = []
     for tool in self.tools_by_group.get(toolgroup['BlockObjectToolGroupSpec']['Id'].lower(), []):
       items.append((tool['ToolSpec']['Order'], False, tool))
@@ -835,9 +836,6 @@ class Generator:
         tool = typing.cast(ToolBlueprint, item)
         if tool['ToolSpec'].get('DevMode'):
           logging.debug(f'Skipping DevMode Tool {tool['ToolSpec']['Id']}')
-          continue
-        if tool['ToolSpec'].get('Hidden'):
-          logging.debug(f'Skipping Hidden Tool {tool['ToolSpec']['Id']}')
           continue
         template = self.templates[tool['ToolSpec']['Id'].lower()]
         if 'PlantableSpec' in template:
@@ -883,8 +881,6 @@ class GraphGenerator(Generator):
       if building.get('PlaceableBlockObjectSpec', {}).get('ToolGroupId', '').lower() not in toolgroups:
         continue
       toolgroup = toolgroups[building['PlaceableBlockObjectSpec']['ToolGroupId'].lower()]
-      if toolgroup['BlockObjectToolGroupSpec'].get('Hidden'):
-        continue
 
       building_goods = set()
       for c in building.get('BuildingSpec', {}).get('BuildingCost', []):
@@ -1129,8 +1125,6 @@ class HtmlGenerator(Generator):
     _ = self.gettext
     line = self.doc.line
     plantable = r.get('PlantableSpec')
-    if not self.IsPlantableResourceGroupVisible(plantable['ResourceGroup']):
-      return
     searchable = [r['Id'].lower()]
     for yield_type in ('CuttableSpec', 'GatherableSpec', 'RuinSpec'):
       if yield_type in r:
@@ -1237,8 +1231,6 @@ class HtmlGenerator(Generator):
               yield_type, yields = self.yieldable_by_group[yieldable['ResourceGroup'].lower()]
               for y in yields:
                 yplantable = y.get('PlantableSpec')
-                if yplantable and not self.IsPlantableResourceGroupVisible(yplantable['ResourceGroup']):
-                  continue
                 resources[y['LabeledEntitySpec']['DisplayNameLocKey']] = y
               line('th', _(f'Pictogram.{yield_type.removesuffix('Spec')}'))
             else:
@@ -1362,8 +1354,6 @@ class TextGenerator(Generator):
   def RenderNaturalResource(self, r: TemplateBlueprint):
     _ = self.gettext
     plantable = r.get('PlantableSpec')
-    if not self.IsPlantableResourceGroupVisible(plantable['ResourceGroup']):
-      return
 
     name = _(r['LabeledEntitySpec']['DisplayNameLocKey'])
     if r['FloodableNaturalResourceSpec']['MinWaterHeight'] > 0:
@@ -1459,8 +1449,6 @@ class TextGenerator(Generator):
         yield_type, yields = self.yieldable_by_group[yieldable['ResourceGroup'].lower()]
         for y in yields:
           yplantable = y.get('PlantableSpec')
-          if yplantable and not self.IsPlantableResourceGroupVisible(yplantable['ResourceGroup']):
-            continue
           resources[y['LabeledEntitySpec']['DisplayNameLocKey']] = y
       else:
         yield_type, yields = None, None
@@ -1576,6 +1564,18 @@ def autoPath(path: str | os.PathLike) -> pathlib.Path | zipfile.Path:
     return path
 
 
+def add_backward_compatible_keys(d: dict):
+  for blueprint in list(d.values()):
+    for spec in blueprint.values():
+      for _id in spec.get('BackwardCompatibleIds', []):
+        if _id.lower() in d:
+          logging.warning(f'Skipping backwards compatible {_id} for {spec['Id']}')
+          continue
+        assert _id.lower() not in d, _id
+        logging.debug(f'Adding {_id} for {spec['Id']}')
+        d[_id.lower()] = blueprint
+
+
 def main():
   data_directories = [
     '%ProgramFiles(x86)%\\Steam\\steamapps\\common\\Timberborn\\Timberborn_Data',
@@ -1680,9 +1680,10 @@ def main():
       if not b:
         return ()
       k = (b['BlockObjectToolGroupSpec'].get('Layout', 'Default'), b['BlockObjectToolGroupSpec']['Order'])
-      groupId = b['BlockObjectToolGroupSpec'].get('GroupId')
-      if groupId:
-        k = ToolGroupKey(toolgroups_by_id[groupId.lower()]) + k
+      groupIds = b.get('ParentToolGroupSpec', {}).get('ParentIds')
+      if groupIds:
+        assert len(groupIds) == 1
+        k = ToolGroupKey(toolgroups_by_id[groupIds[0].lower()]) + k
       return k
     toolgroups = {tg['BlockObjectToolGroupSpec']['Id'].lower(): tg for tg in sorted(toolgroups_by_id.values(), key=lambda kg: ToolGroupKey(kg))}
     templates, tool_lists = load_templates_and_tools(directories, factions, args.debug)
@@ -1704,6 +1705,10 @@ def main():
       json5.dump(d, f, indent=2, quote_keys=True, trailing_commas=False)
     with open(cache_file, 'wb') as f:
       pickle.dump(d, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+  add_backward_compatible_keys(goods)
+  add_backward_compatible_keys(needs)
+  add_backward_compatible_keys(recipes)
 
   os.makedirs(args.output, exist_ok=True)
   index = Index(args)
