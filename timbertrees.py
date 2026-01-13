@@ -247,19 +247,19 @@ class PlantableSpec(Spec):
   PlantTimeInHours: float
 
 
-class YielderSpec(Spec):
+class Yielder(Spec):
   Yield: GoodAmountSpec
   RemovalTimeInHours: float
   ResourceGroup: str
 
 
 class CuttableSpec(Spec):
-  YielderSpec: YielderSpec
+  Yielder: Yielder
 
 
 class GatherableSpec(Spec):
   YieldGrowthTimeInDays: float
-  YielderSpec: YielderSpec
+  Yielder: Yielder
 
 
 class GrowableSpec(Spec):
@@ -267,7 +267,7 @@ class GrowableSpec(Spec):
 
 
 class RuinSpec(Spec):
-  YielderSpec: YielderSpec
+  Yielder: Yielder
 
 
 class CropSpec(Spec):
@@ -797,9 +797,9 @@ class Generator:
     )
     self.plantable_by_group = dict_group_by_id(self.natural_resources, 'PlantableSpec.ResourceGroup')
     self.planter_building_by_group = dict_group_by_id(self.templates.values(), 'PlanterBuildingSpec.PlantableResourceGroup')
-    cuttable_by_group = dict_group_by_id(self.natural_resources, 'CuttableSpec.YielderSpec.ResourceGroup')
-    gatherable_by_group = dict_group_by_id(self.natural_resources, 'GatherableSpec.YielderSpec.ResourceGroup')
-    scavengable_by_group = dict_group_by_id(self.templates.values(), 'RuinSpec.YielderSpec.ResourceGroup')
+    cuttable_by_group = dict_group_by_id(self.natural_resources, 'CuttableSpec.Yielder.ResourceGroup')
+    gatherable_by_group = dict_group_by_id(self.natural_resources, 'GatherableSpec.Yielder.ResourceGroup')
+    scavengable_by_group = dict_group_by_id(self.templates.values(), 'RuinSpec.Yielder.ResourceGroup')
     self.yieldable_by_group: dict[
       str,
       tuple[typing.Literal['CuttableSpec'], list[TemplateBlueprint]] |
@@ -1128,7 +1128,7 @@ class HtmlGenerator(Generator):
     searchable = [r['Id'].lower()]
     for yield_type in ('CuttableSpec', 'GatherableSpec', 'RuinSpec'):
       if yield_type in r:
-        item = r[yield_type]['YielderSpec']['Yield']['Id'].lower()
+        item = r[yield_type]['Yielder']['Yield']['Id'].lower()
         if item != 'log' and item not in searchable:
           searchable.append(item)
     with self.tag('tr', ('data-searchable', ' '.join(searchable)), ('data-category', 'producer'), klass='naturalresource'):
@@ -1244,7 +1244,7 @@ class HtmlGenerator(Generator):
               categories.append('producer')
             for yt in ('CuttableSpec', 'GatherableSpec', 'RuinSpec'):
               if yt in plant:
-                item = plant[yt]['YielderSpec']['Yield']['Id'].lower()
+                item = plant[yt]['Yielder']['Yield']['Id'].lower()
                 if item != 'log' and item not in searchable:
                   searchable.append(item)
             if yields and plant in yields:
@@ -1259,7 +1259,7 @@ class HtmlGenerator(Generator):
               if yields:
                 assert yield_type
                 if plant in yields:
-                  line('td', _('Time.HoursShort').format(plant[yield_type]['YielderSpec']['RemovalTimeInHours']))
+                  line('td', _('Time.HoursShort').format(plant[yield_type]['Yielder']['RemovalTimeInHours']))
                 else:
                   line('td', '')
 
@@ -1463,7 +1463,7 @@ class TextGenerator(Generator):
         if yields:
           assert yield_type
           if plant in yields:
-            stats.append(f'{_('Time.HoursShort').format(plant[yield_type]['YielderSpec']['RemovalTimeInHours'])}{_(f'Pictogram.{yield_type.removesuffix('Spec')}')}')
+            stats.append(f'{_('Time.HoursShort').format(plant[yield_type]['Yielder']['RemovalTimeInHours'])}{_(f'Pictogram.{yield_type.removesuffix('Spec')}')}')
         if stats:
           text += f' [{' '.join(stats)}]'
         c.append(f'{self.prefix}{text}')
