@@ -500,25 +500,25 @@ def load_blueprint_jsons[T: Blueprint](
     pattern_path = autoPath(directory.joinpath(pattern_dir))
     logging.debug(f'Scanning {pattern_path.joinpath(pattern)}:')
     paths = list(pattern_path.glob(pattern))
-    # if i and blueprint == 'BlockObjectToolGroup':  # HACK Handle alternate filenames for TimberAPI
-    #   pattern = f'**/TimberApiToolGroup.*.blueprint.json'
-    #   logging.debug(f'Scanning {directory.joinpath(pattern)}:')
-    #   paths.extend(pattern_path.glob(pattern))
-    if i and blueprint == 'BlockObjectToolGroup':  # HACK Handle alternative filenames for Whitepaws
-      pattern2 = f'**/{pattern.replace('BlockObjectToolGroup', 'ToolGroup')}'
+    if i and not paths:
+      # Easiest way to find files under export/ExportedProject/Assets/mods/*/assetbundles/resources
+      pattern2 = f'**/{pattern}'
       paths.extend(pattern_path.glob(pattern2))
-    if i and not paths:  # HACK to find exported assets for Emberpelts
-      pattern2 = f'**/{pattern.replace('.blueprint.json', '.blueprint.asset')}'
-      paths.extend(pattern_path.glob(pattern2))
-    if i and not paths:  # HACK to find blueprints for Emberpelts BlockObjectToolGroups
-      pattern2 = f'**/{pattern.replace(blueprint, f'{blueprint}s')}'
-      paths.extend(pattern_path.glob(pattern2))
-    if i and not paths:  # HACK to find blueprints for 1x1x2Storage
-      pattern2 = f'**/{pattern.replace('.json', '.blueprint.json')}'
-      paths.extend(pattern_path.glob(pattern2))
-    if i and not paths:  # HACK to find exported assets for Staircase
-      pattern2 = f'**/{pattern.replace('.json', '.blueprint.asset')}'
-      paths.extend(pattern_path.glob(pattern2))
+    if i and blueprint == 'BlockObjectToolGroup':
+      # Handle alternative filenames for Whitepaws
+      pattern2 = pattern.replace('BlockObjectToolGroup', 'ToolGroup')
+      paths.extend(new_paths := list(pattern_path.glob(pattern2)))
+      if new_paths: logging.warning(f'Found via BlockObjectToolGroup --> ToolGroup: {[p.name for p in new_paths]}')
+    if i and not paths:
+      # HACK to find exported AssetRipper assets for Emberpelts and LeafCoats (TimberRipper doesn't need this)
+      pattern2 = pattern.replace('.blueprint.json', '.blueprint.asset')
+      paths.extend(new_paths := list(pattern_path.glob(pattern2)))
+      if new_paths: logging.warning(f'Found via .blueprint.json --> .blueprint.asset: {[p.name for p in new_paths]}')
+    if i and not paths and blueprint == 'BlockObjectToolGroup':
+      # HACK to find blueprints for Emberpelts and LeafCoats BlockObjectToolGroups
+      pattern2 = pattern.replace(blueprint, f'{blueprint}s')
+      paths.extend(new_paths := list(pattern_path.glob(pattern2)))
+      if new_paths: logging.warning(f'Found via BlockObjectToolGroup --> BlockObjectToolGroups: {[p.name for p in new_paths]}')
     all_paths.extend((i, path) for path in paths)
   assert all_paths or upgrade_specs, f'No blueprints found for {pattern}'
 
