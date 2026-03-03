@@ -667,8 +667,8 @@ def load_translations(directories: list[pathlib.Path], language: str):
   catalog['Pictogram.Gatherable'] = '🧺'
   catalog['Pictogram.Ruin'] = '⛓️'
 
-  catalog['Time.DaysShort'] = catalog['Time.DaysShort'].format('{:g}')
-  catalog['Time.HoursShort'] = catalog['Time.HoursShort'].format('{:g}')
+  catalog['Unit.Day.NumberAndUnit'] = catalog['Unit.Day.NumberAndUnit'].format('{:g}')
+  catalog['Unit.Hour.NumberAndUnit'] = catalog['Unit.Hour.NumberAndUnit'].format('{:g}')
 
   def gettext(message: str):
     if message in catalog:
@@ -906,7 +906,7 @@ class GraphGenerator(Generator):
 
     sg.add_node(pydot.Node(
       building['Id'] + '.' + recipe['RecipeSpec']['Id'],
-      label=f'{_('Time.HoursShort').format(recipe['RecipeSpec']['CycleDurationInHours'])}',
+      label=f'{_('Unit.Hour.NumberAndUnit').format(recipe['RecipeSpec']['CycleDurationInHours'])}',
       tooltip=_(recipe['RecipeSpec']['DisplayLocKey']),
     ))
 
@@ -1134,11 +1134,11 @@ class HtmlGenerator(Generator):
     with self.tag('tr', ('data-searchable', ' '.join(searchable)), ('data-category', 'producer'), klass='naturalresource'):
       line('td', _(f'Pictogram.Aquatic') if r['FloodableNaturalResourceSpec']['MinWaterHeight'] > 0 else '', klass='name')
       line('td', _(r['LabeledEntitySpec']['DisplayNameLocKey']), klass='name')
-      line('td', f'{_('Time.DaysShort').format(r['GrowableSpec']['GrowthTimeInDays'])}')
-      line('td', f'{_('Time.DaysShort').format(r['WateredNaturalResourceSpec']['DaysToDieDry'])}')
-      line('td', f'{_('Time.DaysShort').format(r['FloodableNaturalResourceSpec']['DaysToDie'])}')
+      line('td', f'{_('Unit.Day.NumberAndUnit').format(r['GrowableSpec']['GrowthTimeInDays'])}')
+      line('td', f'{_('Unit.Day.NumberAndUnit').format(r['WateredNaturalResourceSpec']['DaysToDieDry'])}')
+      line('td', f'{_('Unit.Day.NumberAndUnit').format(r['FloodableNaturalResourceSpec']['DaysToDie'])}')
       if 'GatherableSpec' in r:
-        line('td', f'{_('Time.DaysShort').format(r['GatherableSpec']['YieldGrowthTimeInDays'])}')
+        line('td', f'{_('Unit.Day.NumberAndUnit').format(r['GatherableSpec']['YieldGrowthTimeInDays'])}')
       else:
         line('td', '')
 
@@ -1253,13 +1253,13 @@ class HtmlGenerator(Generator):
               line('td', _(plant['LabeledEntitySpec']['DisplayNameLocKey']), klass='name')
               if plants:
                 if plant in plants:
-                  line('td', _('Time.HoursShort').format(plant['PlantableSpec']['PlantTimeInHours']))
+                  line('td', _('Unit.Hour.NumberAndUnit').format(plant['PlantableSpec']['PlantTimeInHours']))
                 else:
                   line('td', '')
               if yields:
                 assert yield_type
                 if plant in yields:
-                  line('td', _('Time.HoursShort').format(plant[yield_type]['Yielder']['RemovalTimeInHours']))
+                  line('td', _('Unit.Hour.NumberAndUnit').format(plant[yield_type]['Yielder']['RemovalTimeInHours']))
                 else:
                   line('td', '')
 
@@ -1272,7 +1272,7 @@ class HtmlGenerator(Generator):
       name = _(recipe['RecipeSpec']['DisplayLocKey'])
       line('div', name, klass='name')
       with self.tag('div', klass='stats'):
-        line('div', f'{_('Time.HoursShort').format(recipe['RecipeSpec']['CycleDurationInHours'])}', klass='duration')
+        line('div', f'{_('Unit.Hour.NumberAndUnit').format(recipe['RecipeSpec']['CycleDurationInHours'])}', klass='duration')
 
       with self.tag('div', klass='content'):
 
@@ -1359,12 +1359,12 @@ class TextGenerator(Generator):
     if r['FloodableNaturalResourceSpec']['MinWaterHeight'] > 0:
       name = f'{_(f'Pictogram.Aquatic')} {name}'
     stats = [
-      f'{_('Time.DaysShort').format(r['GrowableSpec']['GrowthTimeInDays'])}{_(f'Pictogram.Grows')}',
-      f'{_('Time.DaysShort').format(r['WateredNaturalResourceSpec']['DaysToDieDry'])}{_(f'Pictogram.Dehydrates')}',
-      f'{_('Time.DaysShort').format(r['FloodableNaturalResourceSpec']['DaysToDie'])}{_(f'Pictogram.Drowns')}',
+      f'{_('Unit.Day.NumberAndUnit').format(r['GrowableSpec']['GrowthTimeInDays'])}{_(f'Pictogram.Grows')}',
+      f'{_('Unit.Day.NumberAndUnit').format(r['WateredNaturalResourceSpec']['DaysToDieDry'])}{_(f'Pictogram.Dehydrates')}',
+      f'{_('Unit.Day.NumberAndUnit').format(r['FloodableNaturalResourceSpec']['DaysToDie'])}{_(f'Pictogram.Drowns')}',
     ]
     if 'GatherableSpec' in r:
-      stats.append(f'{_('Time.DaysShort').format(r['GatherableSpec']['YieldGrowthTimeInDays'])}{_(f'Pictogram.Matures')}')
+      stats.append(f'{_('Unit.Day.NumberAndUnit').format(r['GatherableSpec']['YieldGrowthTimeInDays'])}{_(f'Pictogram.Matures')}')
 
     heading = f'{self.prefix}{name} [{' '.join(stats)}]'
     with self.NewContext(heading, forced=True) as c:
@@ -1459,11 +1459,11 @@ class TextGenerator(Generator):
         stats = []
         if plants:
           if plant in plants:
-            stats.append(f'{_('Time.HoursShort').format(plant['PlantableSpec']['PlantTimeInHours'])}{_(f'Pictogram.Plantable')}')
+            stats.append(f'{_('Unit.Hour.NumberAndUnit').format(plant['PlantableSpec']['PlantTimeInHours'])}{_(f'Pictogram.Plantable')}')
         if yields:
           assert yield_type
           if plant in yields:
-            stats.append(f'{_('Time.HoursShort').format(plant[yield_type]['Yielder']['RemovalTimeInHours'])}{_(f'Pictogram.{yield_type.removesuffix('Spec')}')}')
+            stats.append(f'{_('Unit.Hour.NumberAndUnit').format(plant[yield_type]['Yielder']['RemovalTimeInHours'])}{_(f'Pictogram.{yield_type.removesuffix('Spec')}')}')
         if stats:
           text += f' [{' '.join(stats)}]'
         c.append(f'{self.prefix}{text}')
@@ -1476,7 +1476,7 @@ class TextGenerator(Generator):
 
   def RenderRecipe(self, recipe: RecipeBlueprint):
     _ = self.gettext
-    with self.NewContext(f'{self.prefix}{_(recipe['RecipeSpec']['DisplayLocKey'])} [{_('Time.HoursShort').format(recipe['RecipeSpec']['CycleDurationInHours'])}]') as c:
+    with self.NewContext(f'{self.prefix}{_(recipe['RecipeSpec']['DisplayLocKey'])} [{_('Unit.Hour.NumberAndUnit').format(recipe['RecipeSpec']['CycleDurationInHours'])}]') as c:
       if recipe['RecipeSpec']['Fuel']:
         good = self.goods[recipe['RecipeSpec']['Fuel'].lower()]
         amount = round(1 / recipe['RecipeSpec']['CyclesFuelLasts'], 3)
