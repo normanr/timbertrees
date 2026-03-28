@@ -393,7 +393,7 @@ def upgrade_toolgroup_blueprints(
     if any(not i.optional for i in toolgroup_specs):
       logging.warning(f'Duplicate {toolgroup['BlockObjectToolGroupSpec']['Id']} ToolGroup')
       # continue
-    assert not any(not i.optional for i in toolgroup_specs)
+    assert not any(not i.optional for i in toolgroup_specs), toolgroup_specs
     toolgroup_specs.insert(0, PartialBlueprint(pathlib.Path('builtin'), False, toolgroup))
 
 
@@ -586,7 +586,7 @@ def load_template(
     f'{file_path}.json',
     disable_progess=True,
   )
-  assert len(templates) == 1
+  assert len(templates) == 1, templates
   return typing.cast(TemplateBlueprint, dict(Id=blueprint, **templates[0]))
 
 
@@ -604,7 +604,7 @@ def load_templates_and_tools(
     typing.cast(list, b['TemplateCollectionSpec']['Blueprints']) for b in template_collections if b['TemplateCollectionSpec']['CollectionId'].lower() == 'common'))
 
   for template in track(f'Loading common templates', map(load_template, *zip(*((directories, template) for template in commonpaths))), total=len(commonpaths)):
-    assert template and template['Id'].lower() not in templates['common']
+    assert template and template['Id'].lower() not in templates['common'], template and template['Id']
     templates['common'][template['Id'].lower()] = template
   tools['common'] = load_blueprints(directories, ToolBlueprint, functools.partial(upgrade_tool_blueprints, templates['common']))
 
@@ -1682,7 +1682,9 @@ def main():
       k = (b['BlockObjectToolGroupSpec'].get('Layout', 'Default'), b['BlockObjectToolGroupSpec']['Order'])
       groupIds = b.get('ParentToolGroupSpec', {}).get('ParentIds')
       if groupIds:
-        assert len(groupIds) == 1
+        if len(groupIds) != 1:
+          logging.warning(f'Multiple parents for {b['BlockObjectToolGroupSpec']['Id']}: {groupIds}')
+        # assert len(groupIds) == 1, f'Too many parents for {b['BlockObjectToolGroupSpec']['Id']}: {groupIds}'
         k = ToolGroupKey(toolgroups_by_id[groupIds[0].lower()]) + k
       return k
     toolgroups = {tg['BlockObjectToolGroupSpec']['Id'].lower(): tg for tg in sorted(toolgroups_by_id.values(), key=lambda kg: ToolGroupKey(kg))}
