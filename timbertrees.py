@@ -995,6 +995,8 @@ class GraphGenerator(Generator):
       ))
 
   def Write(self, filename):
+    self.index.AddItem(self.gettext, self.faction, '[svg]', f'{filename}.svg')
+    if self.args.only_index: return
 
     self.graph = g = pydot.Dot(
       graph_type='digraph',
@@ -1036,8 +1038,6 @@ class GraphGenerator(Generator):
 
     self.graph.write(f'{filename}.dot', format='raw', encoding='utf-8')
     self.graph.write(f'{filename}.svg', format='svg', encoding='utf-8')
-
-    self.index.AddItem(self.gettext, self.faction, '[svg]', f'{filename}.svg')
 
 
 class HtmlGenerator(Generator):
@@ -1332,13 +1332,15 @@ class HtmlGenerator(Generator):
       super().RenderRecipe(recipe)
 
   def Write(self, filename):
+    self.index.AddItem(self.gettext, self.faction, self.gettext(self.faction['FactionSpec']['DisplayNameLocKey']), f'{filename}.html')
+    if self.args.only_index: return
+
     self.doc = yattag.Doc()
     self.doc.asis('<!DOCTYPE html>')
     with self.doc.tag('html'):
       self.RenderFaction(self.faction, pathlib.Path(filename))
     with open(f'{filename}.html', 'w', encoding='utf-8') as f:
       print(yattag.indent(self.doc.getvalue()), file=f)
-    self.index.AddItem(self.gettext, self.faction, self.gettext(self.faction['FactionSpec']['DisplayNameLocKey']), f'{filename}.html')
 
 
 class TextGenerator(Generator):
@@ -1529,13 +1531,15 @@ class TextGenerator(Generator):
       super().RenderRecipe(recipe)
 
   def Write(self, filename):
+    self.index.AddItem(self.gettext, self.faction, '[txt]', f'{filename}.txt')
+    if self.args.only_index: return
+
     self.stack = [[]]
     self.RenderFaction(self.faction)
     lines, = self.stack
     with open(f'{filename}.txt', 'w', encoding='utf-8') as f:
       for line in lines:
         print(line, file=f)
-    self.index.AddItem(self.gettext, self.faction, '[txt]', f'{filename}.txt')
 
 
 def expand_directories(directories: list[str]) -> list[pathlib.Path]:
@@ -1614,7 +1618,10 @@ def main():
   parser = argparse.ArgumentParser(add_help=False)
   parser.add_argument('-d', '--data', help='path to Timberborn Data directory', action='append', dest='data_directories', default=data_directories, metavar='PATH')
   parser.add_argument('-m', '--mods', help='path to Timberborn Mods directory', action='append', dest='mod_directories', default=mod_directories, metavar='PATH')
+  parser.add_argument('-f', '--faction', help='Faction to generate (defaults to all)', action='append', dest='factions')
   parser.add_argument('-o', '--output', help='output path', default='out', metavar='PATH')
+  parser.add_argument('-i', '--only-index', help='only write the index file', action='store_true')
+  parser.add_argument('-I', '--no-index', help='do not write the index file', action='store_false', dest='write_index')
   language_arg = parser.add_argument('-l', '--language')
   parser.add_argument('-g', '--graph_grouping_threshold', help='threshold to split buildings with too-many recipes', type=int, default=5)
   parser.add_argument('-q', '--quiet', help='quiet mode (less messages)', action='store_true')
@@ -1745,16 +1752,17 @@ def main():
   )
   for language in args.languages:
     _ = load_translations(directories, language)
-    for faction in factions.values():
-      if faction['FactionSpec']['NewGameFullAvatar'].endswith('NO'):
+    for faction in sorted(factions.values(), key=lambda faction: (faction['FactionSpec']['Order'] > 1, faction['FactionSpec']['Id'])):
+      if args.factions and faction['FactionSpec']['Id'] not in args.factions: continue
       logging.info(f'Generating {faction['FactionSpec']['Id']} in {_('Settings.Language.Name')}: {_(faction['FactionSpec']['DisplayNameLocKey'])}')
       faction_tools = tools[faction['FactionSpec']['Id'].lower()]
       faction_templates = templates[faction['FactionSpec']['Id'].lower()]
       for cls in generators:
         gen = cls(args, index, _, faction, goods, needgroups, needs, recipes, toolgroups, faction_tools, faction_templates)
         gen.Write(f'{args.output}/{language}_{faction['FactionSpec']['Id']}')
-  logging.info('Generating index')
-  index.Write(f'{args.output}/index.html', list(versions.values()))
+  if args.write_index:
+    logging.info('Generating index')
+    index.Write(f'{args.output}/index.html', list(versions.values()))
 
 if __name__ == '__main__':
   try:
