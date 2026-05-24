@@ -1152,7 +1152,6 @@ class HtmlGenerator(Generator):
   def RenderNaturalResource(self, r: TemplateBlueprint):
     _ = self.gettext
     line = self.doc.line
-    plantable = r.get('PlantableSpec')
     searchable = [r['Id'].lower()]
     for yield_type in ('CuttableSpec', 'GatherableSpec', 'RuinSpec'):
       if yield_type in r:
@@ -1163,18 +1162,14 @@ class HtmlGenerator(Generator):
       line('td', _(f'Pictogram.Aquatic') if r['FloodableNaturalResourceSpec']['MinWaterHeight'] > 0 else '', klass='name')
       line('td', _(r['LabeledEntitySpec']['DisplayNameLocKey']), klass='name')
       line('td', f'{_('Unit.Day.NumberAndUnit').format(r['GrowableSpec']['GrowthTimeInDays'])}')
-      line('td', f'{_('Unit.Day.NumberAndUnit').format(r['WateredNaturalResourceSpec']['DaysToDieDry'])}')
-      line('td', f'{_('Unit.Day.NumberAndUnit').format(r['FloodableNaturalResourceSpec']['DaysToDie'])}')
-      if 'GatherableSpec' in r:
-        line('td', f'{_('Unit.Day.NumberAndUnit').format(r['GatherableSpec']['YieldGrowthTimeInDays'])}')
-      else:
-        line('td', '')
+      line('td', f'{_('Unit.Day.NumberAndUnit').format(r['WateredNaturalResourceSpec']['DaysToDieDry'])}' if 'WateredNaturalResourceSpec' in r else '')
+      line('td', f'{_('Unit.Day.NumberAndUnit').format(r['FloodableNaturalResourceSpec']['DaysToDie'])}' if 'FloodableNaturalResourceSpec' in r else '')
+      line('td', f'{_('Unit.Day.NumberAndUnit').format(r['GatherableSpec']['YieldGrowthTimeInDays'])}' if 'GatherableSpec' in r else '')
 
       super().RenderNaturalResource(r)
 
   def RenderToolGroup(self, toolgroup: BlockObjectToolGroupBlueprint):
     _ = self.gettext
-    line = self.doc.line
     if toolgroup['BlockObjectToolGroupSpec'].get('Type') == 'PlantingModeToolGroup':
       super().RenderToolGroup(toolgroup)
       return
@@ -1381,16 +1376,17 @@ class TextGenerator(Generator):
 
   def RenderNaturalResource(self, r: TemplateBlueprint):
     _ = self.gettext
-    plantable = r.get('PlantableSpec')
 
     name = _(r['LabeledEntitySpec']['DisplayNameLocKey'])
     if r['FloodableNaturalResourceSpec']['MinWaterHeight'] > 0:
       name = f'{_(f'Pictogram.Aquatic')} {name}'
     stats = [
       f'{_('Unit.Day.NumberAndUnit').format(r['GrowableSpec']['GrowthTimeInDays'])}{_(f'Pictogram.Grows')}',
-      f'{_('Unit.Day.NumberAndUnit').format(r['WateredNaturalResourceSpec']['DaysToDieDry'])}{_(f'Pictogram.Dehydrates')}',
-      f'{_('Unit.Day.NumberAndUnit').format(r['FloodableNaturalResourceSpec']['DaysToDie'])}{_(f'Pictogram.Drowns')}',
     ]
+    if 'WateredNaturalResourceSpec' in r:
+      stats.append(f'{_('Unit.Day.NumberAndUnit').format(r['WateredNaturalResourceSpec']['DaysToDieDry'])}{_(f'Pictogram.Dehydrates')}')
+    if 'FloodableNaturalResourceSpec' in r:
+      stats.append(f'{_('Unit.Day.NumberAndUnit').format(r['FloodableNaturalResourceSpec']['DaysToDie'])}{_(f'Pictogram.Drowns')}')
     if 'GatherableSpec' in r:
       stats.append(f'{_('Unit.Day.NumberAndUnit').format(r['GatherableSpec']['YieldGrowthTimeInDays'])}{_(f'Pictogram.Matures')}')
 
