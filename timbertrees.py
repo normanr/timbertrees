@@ -151,12 +151,18 @@ class BlockObjectToolGroupBlueprint(Blueprint):
   ToolGroupChildrenSpec: typing.NotRequired[ToolGroupChildrenSpec]
 
 
+class BlueprintModifier(Spec):
+  Original: str
+  Modifier: str
+
+
 class FactionSpec(Spec):
   Id: str
   Order: int
   DisplayNameLocKey: str
   NewGameFullAvatar: str
   TemplateCollectionIds: list[str]
+  BlueprintModifiers: list[BlueprintModifier]
 
 
 class FactionBlueprint(Blueprint):
@@ -486,13 +492,11 @@ def get_asset_content(f: io.TextIOWrapper):
   raise Exception(f'Unknown Script guid: {guid}')
 
 
-def load_blueprint_jsons[T: Blueprint](
+def get_blueprint_paths(
     directories: list[pathlib.Path],
     blueprint: str,
     pattern: str,
-    disable_progess = False,
-    upgrade_specs: typing.Callable[[dict[str, list[PartialBlueprint[T]]]], None] | None = None,
-) -> list[T]:
+) -> list[tuple[int, pathlib.Path | zipfile.Path]]:
   all_paths: list[tuple[int, pathlib.Path | zipfile.Path]] = []
   for i, directory in enumerate(directories):
     # TODO This should iterate over all files and index by available Specs instead
@@ -520,10 +524,26 @@ def load_blueprint_jsons[T: Blueprint](
       paths.extend(new_paths := list(pattern_path.glob(pattern2)))
       if new_paths: logging.warning(f'Found via BlockObjectToolGroup --> BlockObjectToolGroups: {[p.name for p in new_paths]}')
     all_paths.extend((i, path) for path in paths)
+  return all_paths
+
+
+def load_blueprint_jsons[T: Blueprint](
+    directories: list[pathlib.Path],
+    blueprint: str,
+    pattern: str,
+    disable_progess = False,
+    blueprint_modifiers: list[BlueprintModifier] | None = None,
+    upgrade_specs: typing.Callable[[dict[str, list[PartialBlueprint[T]]]], None] | None = None,
+) -> list[T]:
+  all_paths = get_blueprint_paths(
+    directories,
+    blueprint,
+    pattern,
+  )
   assert all_paths or upgrade_specs, f'No blueprints found for {pattern}'
 
   all_specs: dict[str, list[PartialBlueprint[T]]] = {}
-  for i, p in track(f'Loading {blueprint} blueprints', all_paths, total=len(all_paths), disable=disable_progess):
+  for _, p in track(f'Loading {blueprint} blueprints', all_paths, total=len(all_paths), disable=disable_progess):
     logging.debug(f'Reading {p}')
     blueprint_name, _, name = p.stem.lower().partition('.')
     # assert blueprint_name == blueprint.lower().partition('.')[0], f'{blueprint_name} == {blueprint.lower().partition('.')[0]}'
@@ -544,6 +564,23 @@ def load_blueprint_jsons[T: Blueprint](
         e.add_note(f'in {p}')
         raise
     all_specs.setdefault(name, []).append(PartialBlueprint(p, optional, doc))
+  if blueprint_modifiers:
+    for m in blueprint_modifiers:
+      p = pathlib.Path(m['Original'])
+      blueprint_name, _, name = p.name.lower().partition('.')
+      if name not in all_specs:
+        continue
+      pattern = f'{m['Modifier']}.json'
+      mod_paths = get_blueprint_paths(
+        directories,
+        blueprint,
+        pattern,
+      )
+      assert len(mod_paths) == 1, f'Expected 1 modifier {pattern}, found {len(mod_paths)}'
+      for _, p in mod_paths:
+        with p.open('r', encoding='utf-8-sig') as f:
+          doc = typing.cast(T, json5.load(f, strict=False))
+        all_specs[name].append(PartialBlueprint(p, optional, doc))
   if upgrade_specs:
     upgrade_specs(all_specs)
 
@@ -565,12 +602,14 @@ def load_blueprints[T: Blueprint](
     directories: list[pathlib.Path],
     cls: type[T],
     upgrade_specs: typing.Callable[[dict[str, list[PartialBlueprint[T]]]], None] | None = None,
+    blueprint_modifiers: list[BlueprintModifier] | None = None,
 ) -> list[T]:
   blueprint = cls.__name__.removesuffix('Blueprint')
   return load_blueprint_jsons(
     directories,
     blueprint,
     f'**/{blueprint}.*.blueprint.json',
+    blueprint_modifiers=blueprint_modifiers,
     upgrade_specs=upgrade_specs,
   )
 
@@ -596,24 +635,13 @@ def load_templates_and_tools(
     debug: bool,
 ) -> tuple[dict[str, dict[str, TemplateBlueprint]], dict[str, list[ToolBlueprint]]]:
   map = builtins.map if debug else concurrent.futures.ProcessPoolExecutor().map
-  templates: dict[str, dict[str, TemplateBlueprint]] = {'common': {}}
+  templates: dict[str, dict[str, TemplateBlueprint]] = {}
   tools: dict[str, list[ToolBlueprint]] = {}
 
-  template_collections = load_blueprints(directories, TemplateCollectionBlueprint)
-  commonpaths = list(itertools.chain.from_iterable(
-    typing.cast(list, b['TemplateCollectionSpec']['Blueprints']) for b in template_collections if b['TemplateCollectionSpec']['CollectionId'].lower() == 'common'))
-
-  for template in track(f'Loading common templates', map(load_template, *zip(*((directories, template) for template in commonpaths))), total=len(commonpaths)):
-    assert template and template['Id'].lower() not in templates['common'], template and template['Id']
-    templates['common'][template['Id'].lower()] = template
-  tools['common'] = load_blueprints(directories, ToolBlueprint, functools.partial(upgrade_tool_blueprints, templates['common']))
-
   for key, faction in factions.items():
-    if faction['FactionSpec']['NewGameFullAvatar'].endswith('NO'):
-      logging.warning(f'Skipping {faction['FactionSpec']['Id']} because avatar ends with NO')
-      continue
-
-    faction_collections = tuple(g.lower() for g in faction['FactionSpec']['TemplateCollectionIds'])
+    blueprint_modifiers = faction['FactionSpec']['BlueprintModifiers']
+    template_collections = load_blueprints(directories, TemplateCollectionBlueprint, blueprint_modifiers=blueprint_modifiers)
+    faction_collections = ('common',) + tuple(g.lower() for g in faction['FactionSpec']['TemplateCollectionIds'])
     faction_templates = list(itertools.chain.from_iterable(
       typing.cast(list, b['TemplateCollectionSpec']['Blueprints']) for b in template_collections if b['TemplateCollectionSpec']['CollectionId'].lower() in faction_collections))
     templates[key] = {}
@@ -1723,11 +1751,9 @@ def main():
     _ = load_translations(directories, language)
     for faction in factions.values():
       if faction['FactionSpec']['NewGameFullAvatar'].endswith('NO'):
-        logging.info(f'Skipping {faction['FactionSpec']['Id']} in {_('Settings.Language.Name')}: {_(faction['FactionSpec']['DisplayNameLocKey'])}')
-        continue
       logging.info(f'Generating {faction['FactionSpec']['Id']} in {_('Settings.Language.Name')}: {_(faction['FactionSpec']['DisplayNameLocKey'])}')
-      faction_tools = tools['common'] | tools[faction['FactionSpec']['Id'].lower()]
-      faction_templates = templates['common'] | templates[faction['FactionSpec']['Id'].lower()]
+      faction_tools = tools[faction['FactionSpec']['Id'].lower()]
+      faction_templates = templates[faction['FactionSpec']['Id'].lower()]
       for cls in generators:
         gen = cls(args, index, _, faction, goods, needgroups, needs, recipes, toolgroups, faction_tools, faction_templates)
         gen.Write(f'{args.output}/{language}_{faction['FactionSpec']['Id']}')
